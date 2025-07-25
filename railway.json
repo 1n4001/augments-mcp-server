@@ -1,0 +1,36 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "startCommand": "uv run python -m augments_mcp.web_server",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 10
+  },
+  "services": [
+    {
+      "name": "augments-mcp-api",
+      "source": {
+        "repo": "https://github.com/yourusername/augments-mcp-server"
+      },
+      "builder": "DOCKERFILE",
+      "domains": [
+        {
+          "domain": "mcp.augments.dev"
+        }
+      ],
+      "envVars": {
+        "ENV": "production",
+        "WORKERS": 4,
+        "LOG_LEVEL": "INFO",
+        "CACHE_TTL": 3600,
+        "AUGMENTS_CACHE_DIR": "/app/cache"
+      }
+    }
+  ]
+}

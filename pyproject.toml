@@ -17,10 +17,20 @@ dependencies = [
     "rich>=13.0.0",
     "click>=8.1.0",
     "watchdog>=3.0.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.25.0",
+    "redis>=5.0.0",
+    "slowapi>=0.1.9",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "prometheus-client>=0.19.0",
+    "gunicorn>=21.2.0",
 ]
 
 [project.scripts]
 augments-mcp-server = "augments_mcp.server:main"
+augments-mcp = "augments_mcp.__main__:cli"
+augments-web-server = "augments_mcp.web_server:main"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]
