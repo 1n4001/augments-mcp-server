@@ -2,6 +2,8 @@
 
 A comprehensive framework documentation provider for Claude Code via Model Context Protocol (MCP). Provides real-time access to framework documentation, context-aware assistance, and intelligent caching to enhance development workflows.
 
+mcp-name: io.github.augmnt/augments-mcp-server
+
 ## 🚀 Overview
 
 Augments MCP Server is a sophisticated documentation retrieval system that integrates with Claude Code to provide comprehensive, up-to-date framework information. It features advanced caching strategies, multi-source documentation aggregation, and intelligent context enhancement for modern development workflows.
