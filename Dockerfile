@@ -26,6 +26,7 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 COPY frameworks/ ./frameworks/
 COPY start.sh ./
+COPY minimal_server.py ./
 
 # Install dependencies with pip (more reliable on Railway)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
