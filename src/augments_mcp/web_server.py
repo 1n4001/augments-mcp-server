@@ -300,9 +300,9 @@ async def debug_state(request: Request):
         # Test registry access
         if hasattr(request.app.state, 'registry_manager') and request.app.state.registry_manager:
             try:
-                frameworks = request.app.state.registry_manager.list_frameworks()  # Remove await
+                frameworks = request.app.state.registry_manager.list_frameworks()
                 state_info["registry_framework_count"] = len(frameworks)
-                state_info["sample_frameworks"] = [f.get('name', 'unknown') for f in frameworks[:3]]
+                state_info["sample_frameworks"] = [f.name for f in frameworks[:3]]
             except Exception as e:
                 state_info["registry_error"] = str(e)
         
