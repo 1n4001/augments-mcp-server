@@ -21,8 +21,8 @@
   ],
   "remotes": [
     {
-      "type": "streamable-http",
-      "url": "https://mcp.augments.dev"
+      "type": "sse",
+      "url": "https://mcp.augments.dev/sse"
     }
   ]
 }
