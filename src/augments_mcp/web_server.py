@@ -563,7 +563,10 @@ async def search_documentation(
             )
         
         results = await documentation.search_documentation(
-            cache=doc_cache,
+            registry=request.app.state.registry_manager,
+            cache=request.app.state.doc_cache,
+            github_provider=request.app.state.github_provider,
+            website_provider=request.app.state.website_provider,
             framework=search_req.framework,
             query=search_req.query,
             limit=search_req.limit
@@ -591,14 +594,12 @@ async def get_framework_context(
         context = await context_enhancement.get_framework_context(
             registry=request.app.state.registry_manager,
             cache=request.app.state.doc_cache,
-            github_provider=request.app.state.github_provider,
-            website_provider=request.app.state.website_provider,
             frameworks=context_req.frameworks,
             task_description=context_req.task_description
         )
         
         return SuccessResponse(
-            data=context,
+            data={"context": context},
             request_id=request.state.request_id
         )
     except Exception as e:
@@ -624,7 +625,7 @@ async def analyze_code(
             )
         
         analysis = await context_enhancement.analyze_code_compatibility(
-            registry=registry_manager,
+            registry=request.app.state.registry_manager,
             code=analysis_req.code,
             frameworks=analysis_req.frameworks
         )
@@ -685,7 +686,7 @@ async def refresh_cache(
         )
         
         return SuccessResponse(
-            data=result,
+            data={"result": result},
             request_id=request.state.request_id
         )
     except Exception as e:
