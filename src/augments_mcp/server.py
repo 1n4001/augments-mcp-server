@@ -180,8 +180,13 @@ async def app_lifespan(server: FastMCP):
             await website_provider.close()
 
 
-# Initialize FastMCP server
-mcp = FastMCP("augments-mcp-server", lifespan=app_lifespan)
+# Initialize FastMCP server with web deployment configuration
+mcp = FastMCP(
+    "augments-mcp-server", 
+    lifespan=app_lifespan,
+    host="0.0.0.0",  # Bind to all interfaces for Railway
+    port=8080,       # Match Railway configuration
+)
 
 
 # Framework Discovery Tools
@@ -685,8 +690,8 @@ def main():
     
     # Check for transport argument
     if len(sys.argv) > 1 and sys.argv[1] == "streamable-http":
-        # Run with HTTP transport for web deployment (defaults to /mcp mount)
-        mcp.run(transport="http", host="0.0.0.0", port=8080)
+        # Run with streamable-http transport for web deployment
+        mcp.run(transport="streamable-http")
     else:
         # Default to stdio transport for local MCP usage
         mcp.run()
