@@ -300,7 +300,7 @@ async def debug_state(request: Request):
         # Test registry access
         if hasattr(request.app.state, 'registry_manager') and request.app.state.registry_manager:
             try:
-                frameworks = await request.app.state.registry_manager.list_frameworks()
+                frameworks = request.app.state.registry_manager.list_frameworks()  # Remove await
                 state_info["registry_framework_count"] = len(frameworks)
                 state_info["sample_frameworks"] = [f.get('name', 'unknown') for f in frameworks[:3]]
             except Exception as e:
@@ -341,7 +341,7 @@ async def detailed_health(request: Request):
     
     # Check registry
     if hasattr(request.app.state, 'registry_manager') and request.app.state.registry_manager:
-        frameworks = await request.app.state.registry_manager.list_frameworks()
+        frameworks = request.app.state.registry_manager.list_frameworks()
         health_status["components"]["registry"] = {
             "status": "healthy",
             "frameworks": len(frameworks)
@@ -447,7 +447,7 @@ async def list_frameworks(
 ):
     """List available frameworks"""
     try:
-        frameworks = await framework_discovery.list_frameworks_impl(
+        frameworks = await framework_discovery.list_available_frameworks(
             registry=request.app.state.registry_manager,
             category=category
         )
@@ -472,7 +472,7 @@ async def get_framework_info(
 ):
     """Get detailed framework information"""
     try:
-        info = await framework_discovery.get_framework_info_impl(
+        info = await framework_discovery.get_framework_info(
             registry=request.app.state.registry_manager,
             framework=framework
         )
@@ -496,7 +496,7 @@ async def search_frameworks(
 ):
     """Search frameworks"""
     try:
-        results = await framework_discovery.search_frameworks_impl(
+        results = await framework_discovery.search_frameworks(
             registry=request.app.state.registry_manager,
             query=search_req.query
         )
@@ -526,7 +526,7 @@ async def get_documentation(
             # Premium users get higher limits
             pass
         
-        docs = await documentation.get_framework_docs_impl(
+        docs = await documentation.get_framework_docs(
             registry=request.app.state.registry_manager,
             cache=request.app.state.doc_cache,
             github_provider=request.app.state.github_provider,
@@ -561,7 +561,7 @@ async def search_documentation(
                 detail="Framework must be specified for documentation search"
             )
         
-        results = await documentation.search_documentation_impl(
+        results = await documentation.search_documentation(
             cache=doc_cache,
             framework=search_req.framework,
             query=search_req.query,
@@ -587,7 +587,7 @@ async def get_framework_context(
 ):
     """Get multi-framework context"""
     try:
-        context = await context_enhancement.get_framework_context_impl(
+        context = await context_enhancement.get_framework_context(
             registry=request.app.state.registry_manager,
             cache=request.app.state.doc_cache,
             github_provider=request.app.state.github_provider,
@@ -622,7 +622,7 @@ async def analyze_code(
                 detail="Code size exceeds limit (50KB)"
             )
         
-        analysis = await context_enhancement.analyze_code_compatibility_impl(
+        analysis = await context_enhancement.analyze_code_compatibility(
             registry=registry_manager,
             code=analysis_req.code,
             frameworks=analysis_req.frameworks
@@ -646,7 +646,7 @@ async def get_cache_stats(
 ):
     """Get cache statistics"""
     try:
-        stats = await updates.get_cache_statistics_impl(cache=request.app.state.doc_cache)
+        stats = await updates.get_cache_statistics(cache=request.app.state.doc_cache)
         
         return SuccessResponse(
             data=stats,
@@ -674,7 +674,7 @@ async def refresh_cache(
                 detail="Cache refresh requires premium access"
             )
         
-        result = await updates.refresh_framework_cache_impl(
+        result = await updates.refresh_framework_cache(
             registry=request.app.state.registry_manager,
             cache=request.app.state.doc_cache,
             github_provider=request.app.state.github_provider,
