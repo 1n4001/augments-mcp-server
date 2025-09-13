@@ -1,0 +1,56 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile",
+    "buildCommand": null
+  },
+  "deploy": {
+    "numReplicas": 1,
+    "startCommand": "python -m augments_mcp.web_server",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 30,
+    "sleepCommand": null,
+    "cronSchedule": null
+  },
+  "services": [
+    {
+      "name": "augments-mcp-api",
+      "source": {
+        "repo": "https://github.com/augmnt/augments-mcp-server"
+      },
+      "builder": "DOCKERFILE",
+      "domains": [
+        {
+          "domain": "mcp.augments.dev",
+          "enableCloudflare": true
+        }
+      ],
+      "envVars": {
+        "ENV": "production",
+        "WORKERS": 6,
+        "LOG_LEVEL": "INFO",
+        "CACHE_TTL": "600",
+        "AUGMENTS_CACHE_DIR": "/app/cache",
+        "REDIS_POOL_SIZE": "20",
+        "ENFORCE_CLOUDFLARE": "true",
+        "ENABLE_CLOUDFLARE_PROTECTION": "true",
+        "ABUSE_SENSITIVITY": "medium",
+        "GITHUB_TOKEN": "${{GITHUB_TOKEN}}",
+        "MASTER_API_KEY": "${{MASTER_API_KEY}}"
+      },
+      "scaling": {
+        "minReplicas": 1,
+        "maxReplicas": 4,
+        "targetCPU": 70,
+        "targetMemory": 80
+      },
+      "resources": {
+        "memoryLimit": "2Gi",
+        "cpuLimit": "2000m"
+      }
+    }
+  ]
+}
