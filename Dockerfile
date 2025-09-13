@@ -21,16 +21,17 @@ RUN groupadd -r -g 1000 augments && \
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files first (for Docker layer caching)
+# Copy all necessary files for installation
 COPY pyproject.toml ./
+COPY src/ ./src/
+COPY frameworks/ ./frameworks/
 
 # Install dependencies with pip (more reliable on Railway)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir .
 
-# Copy application code
-COPY --chown=augments:augments src/ ./src/
-COPY --chown=augments:augments frameworks/ ./frameworks/
+# Change ownership after installation
+RUN chown -R augments:augments /app
 
 # Create cache and logs directories with proper permissions
 RUN mkdir -p /app/cache /app/logs && \
