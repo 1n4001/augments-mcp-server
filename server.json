@@ -22,7 +22,7 @@
   "remotes": [
     {
       "type": "streamable-http", 
-      "url": "https://mcp.augments.dev"
+      "url": "https://mcp.augments.dev/mcp"
     }
   ]
 }
