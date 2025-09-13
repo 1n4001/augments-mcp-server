@@ -297,15 +297,15 @@ async def detailed_health(request: Request):
     
     # Check Redis
     try:
-        await redis_client.ping()
+        await request.app.state.redis_client.ping()
         health_status["components"]["redis"] = "healthy"
     except Exception as e:
         health_status["components"]["redis"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
     
     # Check cache
-    if doc_cache:
-        stats = await doc_cache.get_stats()
+    if hasattr(request.app.state, 'doc_cache') and request.app.state.doc_cache:
+        stats = await request.app.state.doc_cache.get_stats()
         health_status["components"]["cache"] = {
             "status": "healthy",
             "entries": stats.get("total_entries", 0)
@@ -315,8 +315,8 @@ async def detailed_health(request: Request):
         health_status["status"] = "degraded"
     
     # Check registry
-    if registry_manager:
-        frameworks = await registry_manager.list_frameworks()
+    if hasattr(request.app.state, 'registry_manager') and request.app.state.registry_manager:
+        frameworks = await request.app.state.registry_manager.list_frameworks()
         health_status["components"]["registry"] = {
             "status": "healthy",
             "frameworks": len(frameworks)
