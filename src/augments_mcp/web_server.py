@@ -648,7 +648,10 @@ async def get_cache_stats(
 ):
     """Get cache statistics"""
     try:
-        stats = await updates.get_cache_statistics(cache=request.app.state.doc_cache)
+        stats = await updates.get_cache_statistics(
+            registry=request.app.state.registry_manager,
+            cache=request.app.state.doc_cache
+        )
         
         return SuccessResponse(
             data=stats,
