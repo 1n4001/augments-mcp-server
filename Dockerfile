@@ -25,8 +25,6 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY frameworks/ ./frameworks/
-COPY start.sh ./
-COPY test_server.py ./
 
 # Install dependencies with pip (more reliable on Railway)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
@@ -51,8 +49,7 @@ ENV PYTHONUNBUFFERED=1 \
     REDIS_POOL_SIZE=20 \
     WORKERS=2 \
     LOG_LEVEL=INFO \
-    HOST=0.0.0.0 \
-    REBUILD_TRIGGER=v3
+    HOST=0.0.0.0
 
 # Railway handles healthchecks via railway.json
 # No HEALTHCHECK needed in Dockerfile
@@ -60,5 +57,5 @@ ENV PYTHONUNBUFFERED=1 \
 # Expose port (Railway uses $PORT env var)
 EXPOSE 8080
 
-# Test and start the full MCP server
-CMD ["sh", "-c", "python test_server.py && python -m augments_mcp.web_server"]
+# Start the MCP server (Railway startCommand will override this)
+CMD ["python", "-m", "augments_mcp.web_server"]
