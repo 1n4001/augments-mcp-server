@@ -475,7 +475,7 @@ async def get_framework_info(
     try:
         info = await framework_discovery.get_framework_info(
             registry=request.app.state.registry_manager,
-            framework=framework
+            framework_name=framework
         )
         
         return SuccessResponse(
