@@ -220,10 +220,7 @@ async def lifespan(app: FastAPI):
         registry_manager = FrameworkRegistryManager()
         await registry_manager.initialize()
         
-        doc_cache = DocumentationCache(
-            cache_dir=cache_dir,
-            default_ttl=int(os.getenv("CACHE_TTL", "3600"))
-        )
+        doc_cache = DocumentationCache(cache_dir=cache_dir)
         await doc_cache.initialize()
         
         github_token = os.getenv("GITHUB_TOKEN")
