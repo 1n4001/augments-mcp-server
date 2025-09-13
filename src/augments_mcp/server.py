@@ -681,8 +681,15 @@ async def get_registry_stats(
 
 def main():
     """Main entry point."""
-    # Run the server using FastMCP's built-in method
-    mcp.run()
+    import sys
+    
+    # Check for transport argument
+    if len(sys.argv) > 1 and sys.argv[1] == "streamable-http":
+        # Run with streamable HTTP transport for web deployment
+        mcp.run(transport="streamable-http")
+    else:
+        # Default to stdio transport for local MCP usage
+        mcp.run()
 
 
 if __name__ == "__main__":
