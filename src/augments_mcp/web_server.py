@@ -348,6 +348,24 @@ async def debug_frameworks_discovery(request: Request):
         import traceback
         return {"error": str(e), "traceback": traceback.format_exc()}
 
+@app.get("/debug/frameworks-full")
+async def debug_frameworks_full(request: Request, category: Optional[str] = None):
+    """Test the complete endpoint logic without decorators"""
+    try:
+        from .tools.framework_discovery import list_available_frameworks
+        frameworks = await list_available_frameworks(
+            registry=request.app.state.registry_manager,
+            category=category
+        )
+        
+        return SuccessResponse(
+            data={"frameworks": frameworks},
+            request_id=getattr(request.state, 'request_id', 'debug')
+        )
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 @app.get("/health/detailed")
 @limiter.limit("10 per minute")
 async def detailed_health(request: Request):
