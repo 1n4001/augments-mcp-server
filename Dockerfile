@@ -25,16 +25,15 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY frameworks/ ./frameworks/
+COPY start.sh ./
 
 # Install dependencies with pip (more reliable on Railway)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
     && pip install --no-cache-dir .
 
-# Change ownership after installation
-RUN chown -R augments:augments /app
-
-# Create cache and logs directories with proper permissions
-RUN mkdir -p /app/cache /app/logs && \
+# Make start script executable and change ownership
+RUN chmod +x /app/start.sh && \
+    mkdir -p /app/cache /app/logs && \
     chown -R augments:augments /app
 
 # Switch to non-root user
@@ -49,15 +48,16 @@ ENV PYTHONUNBUFFERED=1 \
     ENV=production \
     AUGMENTS_CACHE_DIR=/app/cache \
     REDIS_POOL_SIZE=20 \
-    WORKERS=6 \
-    LOG_LEVEL=INFO
+    WORKERS=2 \
+    LOG_LEVEL=INFO \
+    HOST=0.0.0.0
 
 # Health check with better timeout handling
-HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
 
 # Expose port
-EXPOSE ${PORT:-8080}
+EXPOSE 8080
 
-# Use exec form for proper signal handling
-CMD ["python", "-m", "augments_mcp.web_server"]
+# Use startup script for better error handling
+CMD ["./start.sh"]
