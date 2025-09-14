@@ -8,6 +8,33 @@ and context to enhance Claude Code's ability to generate accurate, up-to-date co
 import os
 import asyncio
 from typing import List, Dict, Any, Optional
+
+# Monkey patch uvicorn to use wsproto by default
+# This is needed because FastMCP doesn't expose uvicorn websocket configuration
+def _patch_uvicorn_websockets():
+    """Patch uvicorn to use wsproto instead of deprecated websockets."""
+    try:
+        import uvicorn.config
+        import wsproto
+        
+        # Get the original Config.__init__ method
+        original_init = uvicorn.config.Config.__init__
+        
+        def patched_init(self, *args, **kwargs):
+            # Force ws='wsproto' if not explicitly set
+            if 'ws' not in kwargs:
+                kwargs['ws'] = 'wsproto'
+            return original_init(self, *args, **kwargs)
+        
+        # Apply the patch
+        uvicorn.config.Config.__init__ = patched_init
+        
+    except ImportError:
+        # If wsproto or uvicorn not available, skip patching
+        pass
+
+# Apply the patch immediately when the module loads
+_patch_uvicorn_websockets()
 from contextlib import asynccontextmanager
 import sys
 import structlog
@@ -687,21 +714,14 @@ async def get_registry_stats(
 def main():
     """Main entry point."""
     import sys
-    import os
-    
-    # Configure uvicorn to use wsproto instead of deprecated websockets
-    os.environ.setdefault("UVICORN_WS", "wsproto")
     
     # Check for transport argument
     if len(sys.argv) > 1 and sys.argv[1] == "streamable-http":
         # Run with streamable-http transport for web deployment
-        # Configure uvicorn options for wsproto
-        uvicorn_config = {
-            "ws": "wsproto"  # Use wsproto instead of deprecated websockets
-        }
-        mcp.run(transport="streamable-http", **uvicorn_config)
+        # uvicorn will use wsproto due to the monkey patch above
+        mcp.run(transport="streamable-http")
     else:
-        # Default to stdio transport for local MCP usage
+        # Default to stdio transport for local MCP usage (no websockets needed)
         mcp.run()
 
 

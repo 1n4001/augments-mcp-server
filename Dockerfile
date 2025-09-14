@@ -48,7 +48,8 @@ ENV PYTHONUNBUFFERED=1 \
     REDIS_POOL_SIZE=20 \
     WORKERS=2 \
     LOG_LEVEL=INFO \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    UVICORN_WS=wsproto
 
 # Railway handles healthchecks via railway.json
 # No HEALTHCHECK needed in Dockerfile
