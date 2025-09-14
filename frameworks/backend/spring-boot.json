@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "spring-projects/spring-boot",
-        "docs_path": "spring-boot-project/spring-boot-docs/src/docs/asciidoc",
+        "docs_path": "spring-boot-project/spring-boot-docs/src/main/asciidoc",
         "branch": "main"
       },
       "website": "https://spring.io/projects/spring-boot"

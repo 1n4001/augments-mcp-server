@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "expo/expo",
-        "docs_path": "docs",
+        "docs_path": "docs/pages",
         "branch": "main"
       },
       "website": "https://docs.expo.dev"

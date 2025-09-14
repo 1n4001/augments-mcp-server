@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "remix-run/remix",
-        "docs_path": "docs",
+        "docs_path": "docs/guides",
         "branch": "main"
       },
       "website": "https://remix.run"

@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "preactjs/preact",
-        "docs_path": "",
+        "repo": "preactjs/preact-www",
+        "docs_path": "content",
         "branch": "main"
       },
       "website": "https://preactjs.com"

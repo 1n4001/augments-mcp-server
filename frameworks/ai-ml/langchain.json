@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "langchain-ai/langchain",
-        "docs_path": "docs",
+        "docs_path": "docs/docs",
         "branch": "master"
       },
       "website": "https://langchain.com"

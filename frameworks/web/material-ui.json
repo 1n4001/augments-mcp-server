@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "mui/material-ui",
-        "docs_path": "docs",
+        "docs_path": "docs/data",
         "branch": "master"
       },
       "website": "https://mui.com"

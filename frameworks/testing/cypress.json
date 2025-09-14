@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "cypress-io/cypress",
-        "docs_path": "packages/server/docs",
+        "docs_path": "packages/server/lib",
         "branch": "develop"
       },
       "website": "https://docs.cypress.io"

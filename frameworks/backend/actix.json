@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "actix/actix-web",
-        "docs_path": "docs",
+        "docs_path": "actix-web/examples",
         "branch": "master"
       },
       "website": "https://actix.rs"

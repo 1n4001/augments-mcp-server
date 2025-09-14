@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "hotwired/stimulus",
+        "repo": "stimulusjs/stimulus",
         "docs_path": "docs",
         "branch": "main"
       },

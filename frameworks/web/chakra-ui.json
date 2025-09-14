@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "chakra-ui/chakra-ui",
-        "docs_path": "website/content/docs",
+        "repo": "chakra-ui/chakra-ui-docs",
+        "docs_path": "content",
         "branch": "main"
       },
       "website": "https://chakra-ui.com"

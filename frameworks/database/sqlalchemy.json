@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "sqlalchemy/sqlalchemy",
-        "docs_path": "doc/build",
+        "docs_path": "doc",
         "branch": "main"
       },
       "website": "https://docs.sqlalchemy.org"

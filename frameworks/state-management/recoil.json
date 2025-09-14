@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "facebookexperimental/Recoil",
-        "docs_path": "docs",
+        "docs_path": "docs/docs",
         "branch": "main"
       },
       "website": "https://recoiljs.org"

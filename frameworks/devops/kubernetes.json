@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "kubernetes/kubernetes",
-        "docs_path": "docs",
+        "repo": "kubernetes/website",
+        "docs_path": "content/en/docs",
         "branch": "master"
       },
       "website": "https://kubernetes.io/docs"

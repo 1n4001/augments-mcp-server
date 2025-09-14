@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "webpack/webpack",
-        "docs_path": "docs",
+        "repo": "webpack/webpack.js.org",
+        "docs_path": "src/content",
         "branch": "main"
       },
       "website": "https://webpack.js.org"

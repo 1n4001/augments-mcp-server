@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "xamarin/xamarin-forms",
+        "repo": "dotnet/docs-maui",
         "docs_path": "docs",
         "branch": "5.0.0"
       },

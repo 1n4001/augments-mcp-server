@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "expressjs/expressjs.com",
-        "docs_path": "_includes",
+        "docs_path": "en/guide",
         "branch": "master"
       },
       "website": "https://expressjs.com"

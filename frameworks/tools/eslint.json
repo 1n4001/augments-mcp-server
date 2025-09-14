@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "eslint/eslint",
-        "docs_path": "docs",
+        "docs_path": "docs/src",
         "branch": "main"
       },
       "website": "https://eslint.org"

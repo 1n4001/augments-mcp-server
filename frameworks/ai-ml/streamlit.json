@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "streamlit/streamlit",
-        "docs_path": "docs",
+        "repo": "streamlit/docs",
+        "docs_path": "content",
         "branch": "develop"
       },
       "website": "https://docs.streamlit.io"

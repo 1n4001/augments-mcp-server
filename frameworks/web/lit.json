@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "lit/lit",
-        "docs_path": "docs",
+        "repo": "lit/lit.dev",
+        "docs_path": "packages/lit-dev-content/site",
         "branch": "main"
       },
       "website": "https://lit.dev"

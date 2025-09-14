@@ -7,8 +7,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "tailwindlabs/tailwindcss",
-        "docs_path": "docs",
+        "repo": "tailwindlabs/tailwindcss.com",
+        "docs_path": "src/pages/docs",
         "branch": "main"
       },
       "website": "https://tailwindcss.com/docs"

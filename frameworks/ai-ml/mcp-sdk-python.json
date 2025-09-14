@@ -8,7 +8,7 @@
     "documentation": {
       "github": {
         "repo": "modelcontextprotocol/python-sdk",
-        "docs_path": "docs",
+        "docs_path": "README.md",
         "branch": "main"
       },
       "website": "https://modelcontextprotocol.io"
@@ -31,7 +31,7 @@
   "key_features": [
     "fastmcp-framework",
     "server-implementation",
-    "client-implementation", 
+    "client-implementation",
     "resource-management",
     "tool-integration",
     "prompt-templates",

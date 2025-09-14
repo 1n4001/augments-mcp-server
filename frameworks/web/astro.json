@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "withastro/astro",
-        "docs_path": "packages/astro/docs",
+        "repo": "withastro/docs",
+        "docs_path": "src/content/docs",
         "branch": "main"
       },
       "website": "https://astro.build"

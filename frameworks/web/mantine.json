@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "mantinedev/mantine",
-        "docs_path": "docs",
+        "docs_path": "packages/@mantine",
         "branch": "master"
       },
       "website": "https://mantine.dev"

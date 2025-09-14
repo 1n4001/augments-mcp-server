@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "sequelize/sequelize",
+        "repo": "sequelize/website",
         "docs_path": "docs",
         "branch": "main"
       },

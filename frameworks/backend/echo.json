@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "labstack/echo",
-        "docs_path": "website/content",
+        "docs_path": "website/docs",
         "branch": "master"
       },
       "website": "https://echo.labstack.com"

@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "ionic-team/capacitor",
-        "docs_path": "site/docs",
+        "repo": "ionic-team/capacitor-docs",
+        "docs_path": "docs",
         "branch": "main"
       },
       "website": "https://capacitorjs.com/docs"

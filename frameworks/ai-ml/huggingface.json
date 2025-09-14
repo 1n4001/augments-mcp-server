@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "huggingface/transformers",
-        "docs_path": "docs/source",
+        "docs_path": "docs/source/en",
         "branch": "main"
       },
       "website": "https://huggingface.co/docs/transformers"

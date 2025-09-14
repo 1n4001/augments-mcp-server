@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "ansible/ansible",
+        "repo": "ansible/ansible-documentation",
         "docs_path": "docs",
         "branch": "devel"
       },

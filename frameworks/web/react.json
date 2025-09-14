@@ -7,8 +7,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "facebook/react",
-        "docs_path": "docs",
+        "repo": "reactjs/react.dev",
+        "docs_path": "src/content/reference",
         "branch": "main"
       },
       "website": "https://react.dev"

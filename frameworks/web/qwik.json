@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "QwikDev/qwik",
-        "docs_path": "packages/docs/src/content/docs",
+        "docs_path": "packages/docs/src/routes/docs",
         "branch": "main"
       },
       "website": "https://qwik.dev"

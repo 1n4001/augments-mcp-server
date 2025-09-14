@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "solidjs/solid-docs",
-        "docs_path": "src/routes/docs",
+        "repo": "solidjs/solid-docs-legacy",
+        "docs_path": "guides",
         "branch": "main"
       },
       "website": "https://solidjs.com"

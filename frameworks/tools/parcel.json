@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "parcel-bundler/parcel",
-        "docs_path": "packages/parcel/docs",
+        "docs_path": "packages/core/parcel/src",
         "branch": "v2"
       },
       "website": "https://parceljs.org"

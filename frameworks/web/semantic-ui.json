@@ -8,8 +8,8 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "Semantic-Org/Semantic-UI",
-        "docs_path": "docs",
+        "repo": "Semantic-Org/Semantic-UI-Docs",
+        "docs_path": "server/documents",
         "branch": "master"
       },
       "website": "https://semantic-ui.com"

@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "angular/angular",
-        "docs_path": "adev/src/content/docs",
+        "docs_path": "aio/content/guide",
         "branch": "main"
       },
       "website": "https://angular.dev"

@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "gofiber/fiber",
+        "repo": "gofiber/docs",
         "docs_path": "docs",
         "branch": "master"
       },

@@ -8,7 +8,7 @@
   "sources": {
     "documentation": {
       "github": {
-        "repo": "ionic-team/ionic-framework",
+        "repo": "ionic-team/ionic-docs",
         "docs_path": "docs",
         "branch": "main"
       },

@@ -9,7 +9,7 @@
     "documentation": {
       "github": {
         "repo": "tokio-rs/axum",
-        "docs_path": "axum/src",
+        "docs_path": "examples",
         "branch": "main"
       },
       "website": "https://docs.rs/axum"
