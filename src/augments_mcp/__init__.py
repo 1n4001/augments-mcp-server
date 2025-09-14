@@ -1,6 +1,6 @@
 """Augments MCP Server - Framework documentation provider."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.4"
 
 # Remove the direct import that causes the RuntimeWarning
 # from .server import mcp
