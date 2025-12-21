@@ -29,6 +29,7 @@ from .registry.manager import FrameworkRegistryManager
 from .registry.cache import DocumentationCache
 from .providers.github import GitHubProvider
 from .providers.website import WebsiteProvider
+from .providers.localrepository import LocalRepositoryProvider
 from .tools import (
     framework_discovery,
     documentation,
@@ -83,6 +84,7 @@ registry_manager: Optional[FrameworkRegistryManager] = None
 doc_cache: Optional[DocumentationCache] = None
 github_provider: Optional[GitHubProvider] = None
 website_provider: Optional[WebsiteProvider] = None
+localrepository_provider: Optional[LocalRepositoryProvider] = None
 
 # Global middleware components
 smart_limiter: Optional[SmartRateLimiter] = None
@@ -171,7 +173,7 @@ async def add_request_id(request: Request, call_next):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
-    global redis_client, registry_manager, doc_cache, github_provider, website_provider
+    global redis_client, registry_manager, doc_cache, github_provider, website_provider, localrepository_provider
     global smart_limiter, abuse_detector, request_coalescer
     
     logger.info("Starting Augments Web API Server")
@@ -223,7 +225,12 @@ async def lifespan(app: FastAPI):
         github_token = os.getenv("GITHUB_TOKEN")
         github_provider = GitHubProvider(github_token)
         website_provider = WebsiteProvider()
-        
+
+        # Initialize local repository provider with base path from environment variable or default to current directory
+        local_repo_base_path = os.getenv("LOCAL_REPO_BASE_PATH", os.getcwd())
+        localrepository_provider = LocalRepositoryProvider(local_repo_base_path)
+        logger.info("Local repository provider initialized", local_repo_base_path=local_repo_base_path)
+
         # Initialize middleware components (non-ASGI ones only)
         smart_limiter = SmartRateLimiter(redis_client)
         abuse_detector = AbuseDetector(redis_client)
@@ -235,6 +242,7 @@ async def lifespan(app: FastAPI):
         app.state.doc_cache = doc_cache
         app.state.github_provider = github_provider
         app.state.website_provider = website_provider
+        app.state.localrepository_provider = localrepository_provider
         
         logger.info("All components initialized successfully - v2")
         
@@ -266,6 +274,13 @@ async def lifespan(app: FastAPI):
                 logger.info("Website provider closed")
             except Exception as e:
                 logger.warning("Error closing website provider", error=str(e))
+
+        if localrepository_provider:
+            try:
+                await localrepository_provider.close()
+                logger.info("Local repository provider closed")
+            except Exception as e:
+                logger.warning("Error closing local repository provider", error=str(e))
 
         # Close Redis connection
         if redis_client:
@@ -326,6 +341,7 @@ async def debug_state(request: Request):
             "has_doc_cache": hasattr(request.app.state, 'doc_cache'),
             "has_github_provider": hasattr(request.app.state, 'github_provider'),
             "has_website_provider": hasattr(request.app.state, 'website_provider'),
+            "has_localrepository_provider": hasattr(request.app.state, 'localrepository_provider'),
         }
         
         # Test registry access
@@ -565,7 +581,8 @@ async def get_documentation(
             website_provider=request.app.state.website_provider,
             framework=doc_req.framework,
             section=doc_req.section,
-            use_cache=doc_req.use_cache
+            use_cache=doc_req.use_cache,
+            localrepository_provider=request.app.state.localrepository_provider
         )
         
         return SuccessResponse(
@@ -600,7 +617,8 @@ async def search_documentation(
             website_provider=request.app.state.website_provider,
             framework=search_req.framework,
             query=search_req.query,
-            limit=search_req.limit
+            limit=search_req.limit,
+            localrepository_provider=request.app.state.localrepository_provider
         )
         
         return SuccessResponse(
@@ -716,7 +734,8 @@ async def refresh_cache(
             github_provider=request.app.state.github_provider,
             website_provider=request.app.state.website_provider,
             framework=cache_req.framework,
-            force=True
+            force=True,
+            localrepository_provider=request.app.state.localrepository_provider
         )
         
         return SuccessResponse(

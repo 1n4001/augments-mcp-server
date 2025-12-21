@@ -15,6 +15,7 @@ class DocumentationSource(BaseModel):
     """Documentation source configuration."""
     github: Optional[GitHubSource] = None
     website: Optional[HttpUrl] = None
+    localrepository: Optional[str] = None  # Path to local repository
 
 
 class FrameworkSources(BaseModel):

@@ -134,12 +134,13 @@ def validate_documentation_source(source: Dict[str, Any]) -> bool:
         True if valid, False otherwise
     """
     try:
-        # Must have either github or website source
+        # Must have either github, website, or localrepository source
         has_github = "github" in source and source["github"] is not None
         has_website = "website" in source and source["website"] is not None
-        
-        if not has_github and not has_website:
-            logger.error("Documentation source must have either github or website")
+        has_localrepository = "localrepository" in source and source["localrepository"] is not None
+
+        if not has_github and not has_website and not has_localrepository:
+            logger.error("Documentation source must have either github, website, or localrepository")
             return False
         
         # Validate GitHub source
@@ -175,6 +176,13 @@ def validate_documentation_source(source: Dict[str, Any]) -> bool:
             website = source["website"]
             if not isinstance(website, str) or not website.startswith(("http://", "https://")):
                 logger.error("Invalid website URL", website=website)
+                return False
+
+        # Validate localrepository source
+        if has_localrepository:
+            localrepository = source["localrepository"]
+            if not isinstance(localrepository, str) or not localrepository.strip():
+                logger.error("Invalid localrepository path", localrepository=localrepository)
                 return False
         
         return True

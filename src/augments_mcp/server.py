@@ -47,6 +47,7 @@ from .registry.manager import FrameworkRegistryManager
 from .registry.cache import DocumentationCache
 from .providers.github import GitHubProvider
 from .providers.website import WebsiteProvider
+from .providers.localrepository import LocalRepositoryProvider
 from .tools.framework_discovery import (
     list_available_frameworks as list_frameworks_impl,
     search_frameworks as search_frameworks_impl,
@@ -88,6 +89,7 @@ registry_manager: Optional[FrameworkRegistryManager] = None
 doc_cache: Optional[DocumentationCache] = None
 github_provider: Optional[GitHubProvider] = None
 website_provider: Optional[WebsiteProvider] = None
+localrepository_provider: Optional[LocalRepositoryProvider] = None
 
 # Global state tracking
 background_tasks: Set[asyncio.Task] = set()
@@ -116,8 +118,11 @@ def _setup_signal_handlers():
             logger.warning("Could not install signal handlers", error=str(e))
 
 
-def _ensure_initialized() -> tuple[FrameworkRegistryManager, DocumentationCache, GitHubProvider, WebsiteProvider]:
-    """Ensure all global components are initialized and return them."""
+def _ensure_initialized() -> tuple[FrameworkRegistryManager, DocumentationCache, GitHubProvider, WebsiteProvider, Optional[LocalRepositoryProvider]]:
+    """Ensure all global components are initialized and return them.
+
+    Note: LocalRepositoryProvider is optional and may be None.
+    """
     if registry_manager is None:
         raise ToolError("Registry manager not initialized")
     if doc_cache is None:
@@ -126,7 +131,8 @@ def _ensure_initialized() -> tuple[FrameworkRegistryManager, DocumentationCache,
         raise ToolError("GitHub provider not initialized")
     if website_provider is None:
         raise ToolError("Website provider not initialized")
-    return registry_manager, doc_cache, github_provider, website_provider
+    # localrepository_provider is optional - do not check if None
+    return registry_manager, doc_cache, github_provider, website_provider, localrepository_provider
 
 
 async def _auto_cache_popular_frameworks(
@@ -185,7 +191,7 @@ async def _auto_cache_popular_frameworks(
 @asynccontextmanager
 async def app_lifespan(server: FastMCP):
     """Manage application lifecycle with framework registry and cache initialization."""
-    global registry_manager, doc_cache, github_provider, website_provider, shutdown_in_progress
+    global registry_manager, doc_cache, github_provider, website_provider, localrepository_provider, shutdown_in_progress
     
     # Setup signal handlers
     _setup_signal_handlers()
@@ -210,7 +216,11 @@ async def app_lifespan(server: FastMCP):
         logger.info("Initializing providers")
         github_provider = GitHubProvider()
         website_provider = WebsiteProvider()
-        logger.info("Providers initialized")
+
+        # Initialize local repository provider with base path from environment variable or default to current directory
+        local_repo_base_path = os.getenv("LOCAL_REPO_BASE_PATH", os.getcwd())
+        localrepository_provider = LocalRepositoryProvider(local_repo_base_path)
+        logger.info("Providers initialized", local_repo_base_path=local_repo_base_path)
         
         # Auto-cache popular frameworks in background (disabled in production to prevent thread exhaustion)
         enable_auto_cache = os.getenv("ENABLE_AUTO_CACHE", "false").lower() == "true"
@@ -234,7 +244,8 @@ async def app_lifespan(server: FastMCP):
             "registry": registry_manager,
             "cache": doc_cache,
             "github_provider": github_provider,
-            "website_provider": website_provider
+            "website_provider": website_provider,
+            "localrepository_provider": localrepository_provider
         }
         
     except RuntimeError as e:
@@ -304,6 +315,12 @@ async def app_lifespan(server: FastMCP):
                 await website_provider.close()
             except Exception as e:
                 logger.warning("Error closing website provider", error=str(e))
+
+        if localrepository_provider:
+            try:
+                await localrepository_provider.close()
+            except Exception as e:
+                logger.warning("Error closing local repository provider", error=str(e))
         
         logger.info("Augments MCP Server shutdown complete")
 
@@ -372,9 +389,9 @@ async def search_frameworks(
         
         if ctx:
             await ctx.info(f"Searching frameworks for: {query}")
-        
-        reg_mgr, _, _, _ = _ensure_initialized()
-        
+
+        reg_mgr, _, _, _, _ = _ensure_initialized()
+
         return await search_frameworks_impl(reg_mgr, query.strip())
         
     except ToolError:
@@ -450,8 +467,8 @@ async def get_framework_docs(
         if not framework or not framework.strip():
             raise ToolError("Framework name is required")
         
-        reg_mgr, cache, gh_provider, web_provider = _ensure_initialized()
-        
+        reg_mgr, cache, gh_provider, web_provider, local_provider = _ensure_initialized()
+
         return await get_framework_docs_impl(
             reg_mgr,
             cache,
@@ -460,7 +477,8 @@ async def get_framework_docs(
             framework.strip(),
             section.strip() if section else None,
             use_cache,
-            ctx
+            ctx,
+            local_provider
         )
         
     except ToolError:
@@ -495,8 +513,8 @@ async def get_framework_examples(
         if not framework or not framework.strip():
             raise ToolError("Framework name is required")
         
-        reg_mgr, cache, gh_provider, web_provider = _ensure_initialized()
-        
+        reg_mgr, cache, gh_provider, web_provider, local_provider = _ensure_initialized()
+
         return await get_framework_examples_impl(
             reg_mgr,
             cache,
@@ -504,7 +522,8 @@ async def get_framework_examples(
             web_provider,
             framework.strip(),
             pattern.strip() if pattern else None,
-            ctx
+            ctx,
+            local_provider
         )
         
     except ToolError:
@@ -547,8 +566,8 @@ async def search_documentation(
         if ctx:
             await ctx.info(f"Searching documentation for {framework}: {query}")
         
-        reg_mgr, cache, gh_provider, web_provider = _ensure_initialized()
-        
+        reg_mgr, cache, gh_provider, web_provider, local_provider = _ensure_initialized()
+
         results = await search_documentation_impl(
             reg_mgr,
             cache,
@@ -557,7 +576,8 @@ async def search_documentation(
             framework.strip(),
             query.strip(),
             max(1, min(limit, 50)),  # Limit between 1 and 50
-            ctx
+            ctx,
+            local_provider
         )
         
         return results
@@ -601,11 +621,11 @@ async def get_framework_context(
         
         # Clean framework names
         clean_frameworks = [f.strip() for f in frameworks if f.strip()]
-        
+
         if not clean_frameworks:
             return "Error: No valid framework names provided"
-        
-        reg_mgr, cache, _, _ = _ensure_initialized()
+
+        reg_mgr, cache, _, _, _ = _ensure_initialized()
         
         return await get_framework_context_impl(
             reg_mgr,
@@ -652,12 +672,11 @@ async def analyze_code_compatibility(
         
         if not clean_frameworks:
             raise ToolError("No valid framework names provided")
-        
-        if registry_manager is None:
-            raise ToolError("Registry manager not initialized")
+
+        reg_mgr, _, _, _, _ = _ensure_initialized()
         
         return await analyze_code_compatibility_impl(
-            registry_manager,
+            reg_mgr,
             code.strip(),
             clean_frameworks,
             ctx
@@ -692,7 +711,7 @@ async def check_framework_updates(
         if not framework or not framework.strip():
             raise ToolError("Framework name is required")
         
-        reg_mgr, cache, gh_provider, _ = _ensure_initialized()
+        reg_mgr, cache, gh_provider, _, _ = _ensure_initialized()
         
         return await check_framework_updates_impl(
             reg_mgr,
@@ -730,7 +749,7 @@ async def refresh_framework_cache(
     try:
         clean_framework = framework.strip() if framework else None
         
-        reg_mgr, cache, gh_provider, web_provider = _ensure_initialized()
+        reg_mgr, cache, gh_provider, web_provider, local_provider = _ensure_initialized()
         
         return await refresh_framework_cache_impl(
             reg_mgr,
@@ -739,7 +758,8 @@ async def refresh_framework_cache(
             web_provider,
             clean_framework,
             force,
-            ctx
+            ctx,
+            local_provider
         )
         
     except Exception as e:
@@ -765,7 +785,7 @@ async def get_cache_stats(
         if ctx:
             await ctx.info("Retrieving cache statistics")
         
-        reg_mgr, cache, _, _ = _ensure_initialized()
+        reg_mgr, cache, _, _, _ = _ensure_initialized()
         
         stats = await get_cache_statistics_impl(reg_mgr, cache)
         

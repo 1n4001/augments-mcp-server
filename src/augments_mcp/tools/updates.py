@@ -10,6 +10,7 @@ from ..registry.manager import FrameworkRegistryManager
 from ..registry.cache import DocumentationCache
 from ..providers.github import GitHubProvider
 from ..providers.website import WebsiteProvider
+from ..providers.localrepository import LocalRepositoryProvider
 from ..utils.github_client import GitHubClient
 
 logger = structlog.get_logger(__name__)
@@ -139,7 +140,8 @@ async def refresh_framework_cache(
     website_provider: WebsiteProvider,
     framework: Optional[str] = None,
     force: bool = False,
-    ctx: Optional[Context] = None
+    ctx: Optional[Context] = None,
+    localrepository_provider: Optional[LocalRepositoryProvider] = None
 ) -> str:
     """Refresh cached documentation for frameworks.
     
