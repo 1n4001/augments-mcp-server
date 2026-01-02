@@ -40,14 +40,14 @@ USER augments
 # Set Python path
 ENV PYTHONPATH="/app/src:$PYTHONPATH"
 
-# Production environment variables
+# Production environment variables (optimized for hobby/low-traffic deployments)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     ENV=production \
     AUGMENTS_CACHE_DIR=/app/cache \
-    REDIS_POOL_SIZE=20 \
-    WORKERS=2 \
-    LOG_LEVEL=INFO \
+    REDIS_POOL_SIZE=5 \
+    WORKERS=1 \
+    LOG_LEVEL=WARNING \
     HOST=0.0.0.0 \
     UVICORN_WS=wsproto \
     ENABLE_AUTO_CACHE=false \

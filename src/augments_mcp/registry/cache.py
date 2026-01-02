@@ -4,12 +4,16 @@ import os
 import time
 import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from dataclasses import dataclass
+from collections import OrderedDict
 import diskcache as dc
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# Memory cache configuration
+MAX_MEMORY_CACHE_ENTRIES = 100  # Maximum entries in memory cache (LRU eviction)
 
 
 @dataclass
@@ -40,7 +44,10 @@ class DocumentationCache:
         
         # Initialize cache with TTL strategies
         self.cache = dc.Cache(str(self.cache_dir / "documentation"))
-        self.memory_cache: Dict[str, CacheEntry] = {}
+        # Use OrderedDict for LRU eviction (most recently used at end)
+        self.memory_cache: OrderedDict[str, CacheEntry] = OrderedDict()
+        # Index: framework name -> set of cache keys (for O(1) lookups)
+        self._framework_keys: Dict[str, Set[str]] = {}
         
         # TTL strategies based on content stability
         self.cache_ttl = {
@@ -90,10 +97,14 @@ class DocumentationCache:
         if cache_key in self.memory_cache:
             entry = self.memory_cache[cache_key]
             if not self._is_expired(entry):
+                # Move to end for LRU (most recently used)
+                self.memory_cache.move_to_end(cache_key)
                 logger.debug("Cache hit (memory)", framework=framework, path=path)
                 return entry.content
             else:
+                # Remove expired entry and update index
                 del self.memory_cache[cache_key]
+                self._remove_from_index(cache_key, entry.framework)
         
         # Check disk cache
         try:
@@ -101,8 +112,8 @@ class DocumentationCache:
             if entry_data:
                 entry = CacheEntry(**entry_data)
                 if not self._is_expired(entry):
-                    # Promote to memory cache
-                    self.memory_cache[cache_key] = entry
+                    # Promote to memory cache with LRU eviction
+                    self._add_to_memory_cache(cache_key, entry)
                     logger.debug("Cache hit (disk)", framework=framework, path=path)
                     return entry.content
                 else:
@@ -135,9 +146,9 @@ class DocumentationCache:
             framework=framework,
             source_type=source_type
         )
-        
-        # Store in both memory and disk cache
-        self.memory_cache[cache_key] = entry
+
+        # Store in memory cache with LRU eviction
+        self._add_to_memory_cache(cache_key, entry)
         
         try:
             entry_dict = {
@@ -162,13 +173,46 @@ class DocumentationCache:
     def _is_expired(self, entry: CacheEntry) -> bool:
         """Check if a cache entry has expired."""
         return time.time() - entry.cached_at > entry.ttl
+
+    def _add_to_memory_cache(self, cache_key: str, entry: CacheEntry) -> None:
+        """Add entry to memory cache with LRU eviction."""
+        # If key exists, remove it first (will be re-added at end)
+        if cache_key in self.memory_cache:
+            old_entry = self.memory_cache[cache_key]
+            del self.memory_cache[cache_key]
+            self._remove_from_index(cache_key, old_entry.framework)
+
+        # Evict oldest entries if at capacity
+        while len(self.memory_cache) >= MAX_MEMORY_CACHE_ENTRIES:
+            oldest_key, oldest_entry = self.memory_cache.popitem(last=False)
+            self._remove_from_index(oldest_key, oldest_entry.framework)
+            logger.debug("LRU eviction", evicted_key=oldest_key, framework=oldest_entry.framework)
+
+        # Add new entry at end (most recently used)
+        self.memory_cache[cache_key] = entry
+        self._add_to_index(cache_key, entry.framework)
+
+    def _add_to_index(self, cache_key: str, framework: str) -> None:
+        """Add cache key to framework index."""
+        if framework not in self._framework_keys:
+            self._framework_keys[framework] = set()
+        self._framework_keys[framework].add(cache_key)
+
+    def _remove_from_index(self, cache_key: str, framework: str) -> None:
+        """Remove cache key from framework index."""
+        if framework in self._framework_keys:
+            self._framework_keys[framework].discard(cache_key)
+            if not self._framework_keys[framework]:
+                del self._framework_keys[framework]
     
     async def invalidate(self, framework: str, path: str = "", source_type: str = "docs") -> None:
         """Invalidate specific cached content."""
         cache_key = self._get_cache_key(framework, path, source_type)
-        
-        # Remove from memory cache
-        self.memory_cache.pop(cache_key, None)
+
+        # Remove from memory cache and index
+        if cache_key in self.memory_cache:
+            del self.memory_cache[cache_key]
+            self._remove_from_index(cache_key, framework)
         
         # Remove from disk cache
         try:
@@ -181,20 +225,19 @@ class DocumentationCache:
     async def clear_framework(self, framework: str) -> int:
         """Clear all cached content for a specific framework."""
         cleared_count = 0
-        
-        # Clear from memory cache
-        keys_to_remove = []
-        for key, entry in self.memory_cache.items():
-            if entry.framework == framework:
-                keys_to_remove.append(key)
-        
-        for key in keys_to_remove:
-            del self.memory_cache[key]
-            cleared_count += 1
-        
-        # Clear from disk cache
+
+        # Clear from memory cache using index (O(1) lookup instead of O(n) scan)
+        if framework in self._framework_keys:
+            keys_to_remove = list(self._framework_keys[framework])
+            for key in keys_to_remove:
+                if key in self.memory_cache:
+                    del self.memory_cache[key]
+                    cleared_count += 1
+            # Clear the index for this framework
+            del self._framework_keys[framework]
+
+        # Clear from disk cache (still O(n) but disk cache is TTL-based so less critical)
         try:
-            # This is inefficient but diskcache doesn't support prefix deletion
             for key in list(self.cache.iterkeys()):
                 try:
                     entry_data = self.cache.get(key)
@@ -205,16 +248,17 @@ class DocumentationCache:
                     continue
         except Exception as e:
             logger.warning("Cache clear error", error=str(e), framework=framework)
-        
+
         logger.info("Framework cache cleared", framework=framework, count=cleared_count)
         return cleared_count
     
     async def clear_all(self) -> int:
         """Clear all cached content."""
-        # Clear memory cache
+        # Clear memory cache and index
         memory_count = len(self.memory_cache)
         self.memory_cache.clear()
-        
+        self._framework_keys.clear()
+
         # Clear disk cache
         disk_count = 0
         try:
@@ -222,7 +266,7 @@ class DocumentationCache:
             self.cache.clear()
         except Exception as e:
             logger.error("Disk cache clear error", error=str(e))
-        
+
         total_count = memory_count + disk_count
         logger.info("All cache cleared", count=total_count)
         return total_count
@@ -235,9 +279,12 @@ class DocumentationCache:
         except Exception:
             disk_size = 0
             disk_volume = 0
-        
+
         return {
             "memory_entries": len(self.memory_cache),
+            "memory_max_entries": MAX_MEMORY_CACHE_ENTRIES,
+            "memory_utilization_pct": round(len(self.memory_cache) / MAX_MEMORY_CACHE_ENTRIES * 100, 1),
+            "indexed_frameworks": len(self._framework_keys),
             "disk_entries": disk_size,
             "disk_volume_bytes": disk_volume,
             "cache_directory": str(self.cache_dir),
@@ -249,14 +296,15 @@ class DocumentationCache:
         memory_entries = 0
         disk_entries = 0
         total_size = 0
-        
-        # Count memory entries
-        for entry in self.memory_cache.values():
-            if entry.framework == framework:
-                memory_entries += 1
-                total_size += len(entry.content)
-        
-        # Count disk entries (this is expensive but comprehensive)
+
+        # Count memory entries using index (O(1) lookup)
+        if framework in self._framework_keys:
+            for key in self._framework_keys[framework]:
+                if key in self.memory_cache:
+                    memory_entries += 1
+                    total_size += len(self.memory_cache[key].content)
+
+        # Count disk entries (still O(n) but called infrequently)
         try:
             for key in self.cache.iterkeys():
                 try:
@@ -279,33 +327,29 @@ class DocumentationCache:
     
     async def list_keys(self, framework: str) -> List[str]:
         """List all cache keys for a specific framework."""
-        framework_keys = []
-        
-        # Check memory cache
-        for key, entry in self.memory_cache.items():
-            if entry.framework == framework:
-                # Reconstruct the original key format
-                cache_key_parts = f"{framework}:{entry.source_type}"
-                if cache_key_parts not in framework_keys:
-                    framework_keys.append(cache_key_parts)
-        
-        # Check disk cache
+        framework_keys_set: Set[str] = set()
+
+        # Check memory cache using index (O(1) lookup)
+        if framework in self._framework_keys:
+            for key in self._framework_keys[framework]:
+                if key in self.memory_cache:
+                    entry = self.memory_cache[key]
+                    framework_keys_set.add(f"{framework}:{entry.source_type}")
+
+        # Check disk cache (still O(n) but called infrequently)
         try:
             for key in self.cache.iterkeys():
                 try:
                     entry_data = self.cache.get(key)
                     if entry_data and entry_data.get('framework') == framework:
-                        # Reconstruct the original key format
                         source_type = entry_data.get('source_type', 'docs')
-                        cache_key_parts = f"{framework}:{source_type}"
-                        if cache_key_parts not in framework_keys:
-                            framework_keys.append(cache_key_parts)
+                        framework_keys_set.add(f"{framework}:{source_type}")
                 except Exception:
                     continue
         except Exception as e:
             logger.warning("Error listing cache keys", error=str(e), framework=framework)
-        
-        return framework_keys
+
+        return list(framework_keys_set)
     
     async def get_by_key(self, cache_key: str) -> Optional[str]:
         """Get cached content by reconstructed cache key."""

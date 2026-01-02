@@ -71,13 +71,36 @@ from .tools.updates import (
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure structured logging to use stderr
+# Configure structured logging based on environment
+def _get_log_level() -> int:
+    """Get log level from environment."""
+    level_map = {
+        "DEBUG": 10,
+        "INFO": 20,
+        "WARNING": 30,
+        "ERROR": 40,
+        "CRITICAL": 50
+    }
+    level_name = os.getenv("LOG_LEVEL", "INFO").upper()
+    return level_map.get(level_name, 20)
+
+def _get_log_renderer():
+    """Get appropriate log renderer based on environment."""
+    if os.getenv("ENV") == "production":
+        # JSON renderer for production - more efficient, parseable by log aggregators
+        return structlog.processors.JSONRenderer()
+    else:
+        # Console renderer for development - human-readable
+        return structlog.dev.ConsoleRenderer()
+
 structlog.configure(
     processors=[
-        structlog.dev.ConsoleRenderer()
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        _get_log_renderer()
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(20),  # INFO level
-    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),  # Send to stderr
+    wrapper_class=structlog.make_filtering_bound_logger(_get_log_level()),
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
     cache_logger_on_first_use=True,
 )
 

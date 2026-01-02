@@ -28,11 +28,11 @@
       ],
       "envVars": {
         "ENV": "production",
-        "WORKERS": 2,
-        "LOG_LEVEL": "INFO",
+        "WORKERS": "1",
+        "LOG_LEVEL": "WARNING",
         "CACHE_TTL": "600",
         "AUGMENTS_CACHE_DIR": "/app/cache",
-        "REDIS_POOL_SIZE": "20",
+        "REDIS_POOL_SIZE": "5",
         "ENFORCE_CLOUDFLARE": "true",
         "ENABLE_CLOUDFLARE_PROTECTION": "true",
         "ABUSE_SENSITIVITY": "medium",
@@ -42,15 +42,9 @@
         "GITHUB_TOKEN": "${{GITHUB_TOKEN}}",
         "MASTER_API_KEY": "${{MASTER_API_KEY}}"
       },
-      "scaling": {
-        "minReplicas": 1,
-        "maxReplicas": 4,
-        "targetCPU": 70,
-        "targetMemory": 80
-      },
       "resources": {
-        "memoryLimit": "2Gi",
-        "cpuLimit": "2000m"
+        "memoryLimit": "512Mi",
+        "cpuLimit": "500m"
       }
     }
   ]

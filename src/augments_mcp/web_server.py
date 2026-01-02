@@ -90,16 +90,29 @@ abuse_detector: Optional[AbuseDetector] = None
 request_coalescer: Optional['RequestCoalescer'] = None
 
 # Rate limiting
-def get_redis_url():
-    """Get Redis URL from environment or default"""
-    return os.getenv("REDIS_URL", "redis://localhost:6379")
+def get_redis_url() -> Optional[str]:
+    """Get Redis URL from environment, returns None if not configured"""
+    return os.getenv("REDIS_URL")
 
-# Create rate limiter with Redis backend for distributed rate limiting
-limiter = Limiter(
-    key_func=get_remote_address,
-    storage_uri=get_redis_url(),
-    default_limits=["100 per minute", "1000 per hour"]
-)
+def _create_rate_limiter() -> Limiter:
+    """Create rate limiter with Redis if available, otherwise in-memory."""
+    redis_url = get_redis_url()
+    if redis_url:
+        logger.info("Using Redis for rate limiting", redis_url=redis_url.split("@")[-1])
+        return Limiter(
+            key_func=get_remote_address,
+            storage_uri=redis_url,
+            default_limits=["100 per minute", "1000 per hour"]
+        )
+    else:
+        logger.info("Redis not configured, using in-memory rate limiting")
+        return Limiter(
+            key_func=get_remote_address,
+            default_limits=["100 per minute", "1000 per hour"]
+        )
+
+# Create rate limiter (Redis if available, otherwise in-memory)
+limiter = _create_rate_limiter()
 
 # API Key validation
 API_KEY_HEADER = "X-API-Key"
@@ -175,68 +188,79 @@ async def lifespan(app: FastAPI):
     global smart_limiter, abuse_detector, request_coalescer
     
     logger.info("Starting Augments Web API Server")
-    
+
     try:
-        # Initialize Redis with retry logic
+        # Initialize Redis if configured (optional for hobby deployments)
         redis_url = get_redis_url()
-        logger.info(f"Connecting to Redis at: {redis_url}")
-        
-        for attempt in range(10):  # Try 10 times
-            try:
-                redis_client = await redis.from_url(
-                    redis_url,
-                    encoding="utf-8",
-                    decode_responses=True,
-                    socket_timeout=30,  # Increased from 5s to prevent premature timeouts
-                    socket_connect_timeout=10,  # Increased from 5s
-                    socket_keepalive=True,  # Enable TCP keepalive
-                    retry_on_timeout=True  # Retry on timeout
-                )
-                await redis_client.ping()
-                logger.info("Connected to Redis successfully")
-                break
-            except Exception as e:
-                logger.warning(f"Redis connection attempt {attempt + 1}/10 failed: {e}")
-                if attempt == 9:  # Last attempt
-                    raise
-                await asyncio.sleep(2)  # Wait 2 seconds before retry
-        
+        redis_pool_size = int(os.getenv("REDIS_POOL_SIZE", "5"))
+
+        if redis_url:
+            logger.info(f"Connecting to Redis (pool_size={redis_pool_size})")
+            for attempt in range(5):  # Try 5 times (reduced from 10)
+                try:
+                    redis_client = await redis.from_url(
+                        redis_url,
+                        encoding="utf-8",
+                        decode_responses=True,
+                        socket_timeout=30,
+                        socket_connect_timeout=10,
+                        socket_keepalive=True,
+                        retry_on_timeout=True,
+                        max_connections=redis_pool_size  # Limit connection pool
+                    )
+                    await redis_client.ping()
+                    logger.info("Connected to Redis successfully")
+                    break
+                except Exception as e:
+                    logger.warning(f"Redis connection attempt {attempt + 1}/5 failed: {e}")
+                    if attempt == 4:  # Last attempt
+                        logger.warning("Redis unavailable, continuing without Redis features")
+                        redis_client = None
+                    else:
+                        await asyncio.sleep(2)
+        else:
+            logger.info("Redis not configured, running without Redis (hobby mode)")
+            redis_client = None
+
         # Initialize components with safe cache directory
         cache_dir = os.getenv("AUGMENTS_CACHE_DIR", "/app/cache")
         logger.info(f"Cache directory: {cache_dir}")
-        
+
         try:
             os.makedirs(cache_dir, exist_ok=True, mode=0o755)
             logger.info(f"Cache directory created/verified: {cache_dir}")
         except Exception as e:
             logger.error(f"Failed to create cache directory {cache_dir}: {e}")
-            # Fall back to /tmp if the specified directory fails
             cache_dir = "/tmp/augments-cache"
             os.makedirs(cache_dir, exist_ok=True, mode=0o755)
             logger.warning(f"Using fallback cache directory: {cache_dir}")
-        
+
         registry_manager = FrameworkRegistryManager()
         await registry_manager.initialize()
-        
+
         doc_cache = DocumentationCache(cache_dir=cache_dir)
-        
+
         github_token = os.getenv("GITHUB_TOKEN")
         github_provider = GitHubProvider(github_token)
         website_provider = WebsiteProvider()
-        
-        # Initialize middleware components (non-ASGI ones only)
-        smart_limiter = SmartRateLimiter(redis_client)
-        abuse_detector = AbuseDetector(redis_client)
+
+        # Initialize middleware components (only if Redis is available)
+        if redis_client:
+            smart_limiter = SmartRateLimiter(redis_client)
+            abuse_detector = AbuseDetector(redis_client)
+        else:
+            smart_limiter = None
+            abuse_detector = None
         request_coalescer = RequestCoalescer(ttl=10)
-        
+
         # Store components in app state for endpoint access
         app.state.redis_client = redis_client
         app.state.registry_manager = registry_manager
         app.state.doc_cache = doc_cache
         app.state.github_provider = github_provider
         app.state.website_provider = website_provider
-        
-        logger.info("All components initialized successfully - v2")
+
+        logger.info("All components initialized successfully", redis_enabled=redis_client is not None)
         
         yield
         
@@ -352,20 +376,25 @@ async def detailed_health(request: Request):
         "components": {}
     }
     
-    # Check Redis
-    try:
-        await request.app.state.redis_client.ping()
-        health_status["components"]["redis"] = "healthy"
-    except Exception as e:
-        health_status["components"]["redis"] = f"unhealthy: {str(e)}"
-        health_status["status"] = "degraded"
+    # Check Redis (optional component)
+    if hasattr(request.app.state, 'redis_client') and request.app.state.redis_client:
+        try:
+            await request.app.state.redis_client.ping()
+            health_status["components"]["redis"] = "healthy"
+        except Exception as e:
+            health_status["components"]["redis"] = f"unhealthy: {str(e)}"
+            health_status["status"] = "degraded"
+    else:
+        health_status["components"]["redis"] = "not_configured"
     
     # Check cache
     if hasattr(request.app.state, 'doc_cache') and request.app.state.doc_cache:
-        stats = await request.app.state.doc_cache.get_stats()
+        stats = request.app.state.doc_cache.get_stats()
         health_status["components"]["cache"] = {
             "status": "healthy",
-            "entries": stats.get("total_entries", 0)
+            "memory_entries": stats.get("memory_entries", 0),
+            "memory_max": stats.get("memory_max_entries", 100),
+            "disk_entries": stats.get("disk_entries", 0)
         }
     else:
         health_status["components"]["cache"] = "unhealthy"

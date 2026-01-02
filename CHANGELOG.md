@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.9] - 2026-01-03
+
+### Fixed
+- **Memory exhaustion**: Added LRU eviction to memory cache (max 100 entries)
+- **High Railway costs**: Reduced resource limits (2Gi→512Mi RAM, 2→1 workers)
+- **O(n) cache operations**: Added framework key indexing for O(1) lookups
+- **Redis dependency**: Made Redis optional for hobby deployments
+
+### Changed
+- Railway memory limit reduced from 2Gi to 512Mi
+- Railway CPU limit reduced from 2000m to 500m
+- Removed auto-scaling (was scaling to 4 replicas)
+- Workers reduced from 2 to 1 for hobby deployments
+- Redis pool size reduced from 20 to 5 connections
+- Log level changed to WARNING in production
+- Logging uses JSON renderer in production for efficiency
+
+### Added
+- LRU eviction for memory cache with configurable max entries
+- Framework key index for O(1) cache lookups by framework
+- Memory utilization stats in cache statistics
+- Graceful fallback to in-memory rate limiting when Redis unavailable
+
 ## [1.0.0] - 2025-01-21
 
 ### Added
