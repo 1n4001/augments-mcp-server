@@ -5,7 +5,7 @@
  * Provides real-time framework documentation access for AI assistants.
  */
 
-export { AugmentsMcpServer, getServer, SERVER_VERSION } from './server';
+export { getServer, SERVER_VERSION } from './server';
 export { getRegistry, FrameworkRegistryManager } from './registry/manager';
 export { getCache, KVCache } from './cache';
 export { getGitHubProvider, GitHubProvider } from './providers/github';

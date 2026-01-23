@@ -1,206 +1,208 @@
 /**
  * MCP API Route for Vercel
  *
- * Handles HTTP requests for the MCP server.
- * Uses direct JSON-RPC handling for serverless compatibility.
+ * Handles HTTP requests for the MCP server using the official MCP SDK transport.
+ * Uses WebStandardStreamableHTTPServerTransport for Claude Code compatibility.
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { getServer, SERVER_VERSION } from '@/server';
-import { checkRateLimit, getRateLimitHeaders } from '@/middleware/rate-limit';
-import { validateApiKey } from '@/middleware/auth';
-import { trackUsage } from '@/middleware/usage-tracking';
 import { getLogger } from '@/utils/logger';
 
 const logger = getLogger('api:mcp');
 
-// CORS headers
+// CORS headers for MCP protocol
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-ID',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version',
 };
 
 /**
  * Handle OPTIONS requests for CORS preflight
  */
 export async function OPTIONS() {
-  return new NextResponse(null, {
+  return new Response(null, {
     status: 204,
     headers: corsHeaders,
   });
 }
 
 /**
- * Handle GET requests - health check and server info
+ * Handle GET requests - MCP protocol or health check
  */
-export async function GET() {
-  return NextResponse.json(
-    {
-      name: 'augments-mcp-server',
-      version: SERVER_VERSION,
-      status: 'healthy',
-      transport: 'http',
-      endpoint: '/api/mcp',
-      tools: 12,
-    },
-    {
-      headers: corsHeaders,
-    }
-  );
-}
+export async function GET(request: Request) {
+  // Check if this is an MCP protocol request (has Accept header for SSE or JSON)
+  const acceptHeader = request.headers.get('Accept') || '';
+  const isMcpRequest = acceptHeader.includes('text/event-stream') || acceptHeader.includes('application/json');
 
-/**
- * Handle POST requests - MCP protocol messages
- */
-export async function POST(request: NextRequest) {
-  const startTime = Date.now();
-  let toolName: string | undefined;
-  let framework: string | undefined;
-
-  try {
-    // Get client identifier for rate limiting (use IP or API key)
-    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0] ||
-                     request.headers.get('x-real-ip') ||
-                     'unknown';
-
-    // Validate API key (currently all requests pass through)
-    const authResult = await validateApiKey(request.headers.get('authorization'));
-
-    // Check rate limit
-    const rateLimitResult = await checkRateLimit(
-      authResult.apiKey || clientIp
-    );
-
-    if (!rateLimitResult.success) {
-      logger.warn('Rate limit exceeded', { clientIp });
-
-      return NextResponse.json(
-        {
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Rate limit exceeded. Please try again later.',
-          },
-          id: null,
-        },
-        {
-          status: 429,
-          headers: {
-            ...corsHeaders,
-            ...getRateLimitHeaders(rateLimitResult),
-            'Retry-After': Math.ceil((rateLimitResult.reset - Date.now()) / 1000).toString(),
-          },
-        }
-      );
-    }
-
-    // Parse the request body
-    const body = await request.json();
-
-    // Extract tool name for tracking
-    if (body.method === 'tools/call' && body.params?.name) {
-      toolName = body.params.name;
-      framework = body.params.arguments?.framework;
-    }
-
-    // Get the MCP server
-    const server = await getServer();
-
-    // Handle the JSON-RPC request
-    let result: unknown;
-
-    if (body.method === 'initialize') {
-      // Handle initialize request
-      result = {
-        protocolVersion: '2024-11-05',
-        capabilities: {
-          tools: {},
-        },
-        serverInfo: {
-          name: 'augments-mcp-server',
-          version: SERVER_VERSION,
-        },
-      };
-    } else if (body.method === 'tools/list') {
-      // List available tools
-      result = {
-        tools: server.getToolsList(),
-      };
-    } else if (body.method === 'tools/call') {
-      // Call a tool
-      const toolResult = await server.callTool(body.params.name, body.params.arguments);
-      result = toolResult;
-    } else {
-      // Unknown method
-      return NextResponse.json(
-        {
-          jsonrpc: '2.0',
-          error: {
-            code: -32601,
-            message: `Method not found: ${body.method}`,
-          },
-          id: body.id,
-        },
-        {
-          status: 400,
-          headers: corsHeaders,
-        }
-      );
-    }
-
-    // Track usage
-    await trackUsage({
-      tool: toolName || body.method || 'unknown',
-      framework,
-      tier: authResult.tier,
-      timestamp: Date.now(),
-      success: true,
-      duration_ms: Date.now() - startTime,
-    });
-
-    // Return successful response
-    return NextResponse.json(
+  if (!isMcpRequest) {
+    // Return health check response for non-MCP requests
+    return new Response(
+      JSON.stringify({
+        name: 'augments-mcp-server',
+        version: SERVER_VERSION,
+        status: 'healthy',
+        transport: 'streamable-http',
+        endpoint: '/api/mcp',
+        tools: 12,
+      }),
       {
-        jsonrpc: '2.0',
-        result,
-        id: body.id,
-      },
-      {
+        status: 200,
         headers: {
           ...corsHeaders,
-          ...getRateLimitHeaders(rateLimitResult),
+          'Content-Type': 'application/json',
         },
       }
     );
+  }
+
+  // Handle MCP GET request (for SSE streams)
+  try {
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless mode for serverless
+      enableJsonResponse: true, // JSON instead of SSE for serverless compatibility
+    });
+
+    const server = await getServer();
+    await server.connect(transport);
+
+    const response = await transport.handleRequest(request);
+
+    // Add CORS headers to the response
+    const newHeaders = new Headers(response.headers);
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      newHeaders.set(key, value);
+    });
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
   } catch (error) {
-    logger.error('MCP request failed', {
+    logger.error('MCP GET request failed', {
       error: error instanceof Error ? error.message : String(error),
-      toolName,
     });
 
-    // Track failed usage
-    await trackUsage({
-      tool: toolName || 'unknown',
-      framework,
-      tier: 'free',
-      timestamp: Date.now(),
-      success: false,
-      duration_ms: Date.now() - startTime,
-    });
-
-    return NextResponse.json(
-      {
+    return new Response(
+      JSON.stringify({
         jsonrpc: '2.0',
         error: {
           code: -32603,
           message: error instanceof Error ? error.message : 'Internal server error',
         },
         id: null,
-      },
+      }),
       {
         status: 500,
-        headers: corsHeaders,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  }
+}
+
+/**
+ * Handle POST requests - MCP protocol messages
+ */
+export async function POST(request: Request) {
+  try {
+    // Create stateless transport for each request (serverless compatible)
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless mode for serverless
+      enableJsonResponse: true, // JSON instead of SSE for serverless compatibility
+    });
+
+    const server = await getServer();
+    await server.connect(transport);
+
+    const response = await transport.handleRequest(request);
+
+    // Add CORS headers to the response
+    const newHeaders = new Headers(response.headers);
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      newHeaders.set(key, value);
+    });
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
+  } catch (error) {
+    logger.error('MCP POST request failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : 'Internal server error',
+        },
+        id: null,
+      }),
+      {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  }
+}
+
+/**
+ * Handle DELETE requests - Session termination
+ */
+export async function DELETE(request: Request) {
+  try {
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless mode for serverless
+      enableJsonResponse: true,
+    });
+
+    const server = await getServer();
+    await server.connect(transport);
+
+    const response = await transport.handleRequest(request);
+
+    // Add CORS headers to the response
+    const newHeaders = new Headers(response.headers);
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      newHeaders.set(key, value);
+    });
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
+  } catch (error) {
+    logger.error('MCP DELETE request failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: error instanceof Error ? error.message : 'Internal server error',
+        },
+        id: null,
+      }),
+      {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json',
+        },
       }
     );
   }

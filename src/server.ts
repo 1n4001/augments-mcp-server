@@ -3,8 +3,11 @@
  *
  * A comprehensive MCP server that provides real-time access to framework documentation
  * and context to enhance Claude Code's ability to generate accurate, up-to-date code.
+ *
+ * Uses the official MCP SDK for Claude Code compatibility.
  */
 
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { getRegistry, FrameworkRegistryManager } from '@/registry/manager';
 import { getCache, KVCache } from '@/cache';
@@ -36,371 +39,320 @@ const logger = getLogger('mcp-server');
 // Server version
 export const SERVER_VERSION = '3.0.0';
 
-// Tool definition interface
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: z.ZodType<unknown>;
-  handler: (args: unknown) => Promise<unknown>;
+// Singleton instance for serverless environments
+let serverInstance: McpServer | null = null;
+
+// Dependencies (cached)
+let registry: FrameworkRegistryManager | null = null;
+let cache: KVCache | null = null;
+let githubProvider: GitHubProvider | null = null;
+let websiteProvider: WebsiteProvider | null = null;
+
+/**
+ * Initialize dependencies
+ */
+async function initializeDependencies(): Promise<{
+  registry: FrameworkRegistryManager;
+  cache: KVCache;
+  githubProvider: GitHubProvider;
+  websiteProvider: WebsiteProvider;
+}> {
+  if (!registry) {
+    registry = await getRegistry();
+  }
+  if (!cache) {
+    cache = getCache();
+  }
+  if (!githubProvider) {
+    githubProvider = getGitHubProvider();
+  }
+  if (!websiteProvider) {
+    websiteProvider = getWebsiteProvider();
+  }
+
+  return { registry, cache, githubProvider, websiteProvider };
 }
 
 /**
- * Augments MCP Server class
+ * Format tool result for MCP response
  */
-export class AugmentsMcpServer {
-  private tools: Map<string, ToolDefinition> = new Map();
-  private registry!: FrameworkRegistryManager;
-  private cache!: KVCache;
-  private githubProvider!: GitHubProvider;
-  private websiteProvider!: WebsiteProvider;
-  private initialized = false;
-
-  /**
-   * Initialize the server and register all tools
-   */
-  async initialize(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
-
-    logger.info('Initializing Augments MCP Server', { version: SERVER_VERSION });
-
-    // Initialize dependencies
-    this.registry = await getRegistry();
-    this.cache = getCache();
-    this.githubProvider = getGitHubProvider();
-    this.websiteProvider = getWebsiteProvider();
-
-    logger.info('Dependencies initialized', {
-      frameworks: this.registry.getFrameworkCount(),
-      categories: this.registry.getCategories(),
-    });
-
-    // Register all tools
-    this.registerTools();
-
-    this.initialized = true;
-    logger.info('MCP Server initialized successfully', {
-      tools: this.tools.size,
-      version: SERVER_VERSION,
-    });
-  }
-
-  /**
-   * Register all MCP tools
-   */
-  private registerTools(): void {
-    // ==================== Discovery Tools ====================
-
-    this.registerTool({
-      name: 'list_available_frameworks',
-      description: 'List all available frameworks, optionally filtered by category. Returns framework information including name, category, and description.',
-      inputSchema: z.object({
-        category: z.enum(FrameworkCategories).optional(),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { category?: (typeof FrameworkCategories)[number] };
-        return listAvailableFrameworks(this.registry, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'search_frameworks',
-      description: 'Search for frameworks by name, keyword, or feature. Returns a ranked list of matching frameworks with relevance scores.',
-      inputSchema: z.object({
-        query: z.string().min(1),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { query: string };
-        return searchFrameworks(this.registry, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'get_framework_info',
-      description: 'Get detailed information about a specific framework including sources, features, and patterns.',
-      inputSchema: z.object({
-        framework: z.string().min(1),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework: string };
-        return getFrameworkInfo(this.registry, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'get_registry_stats',
-      description: 'Get statistics about the framework registry including total frameworks and categories.',
-      inputSchema: z.object({}),
-      handler: async () => {
-        return getRegistryStats(this.registry);
-      },
-    });
-
-    // ==================== Documentation Tools ====================
-
-    this.registerTool({
-      name: 'get_framework_docs',
-      description: 'Retrieve comprehensive documentation for a specific framework. Fetches from GitHub or official documentation.',
-      inputSchema: z.object({
-        framework: z.string().min(1),
-        section: z.string().optional(),
-        use_cache: z.boolean().default(true),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework: string; section?: string; use_cache?: boolean };
-        return getFrameworkDocs(this.registry, this.cache, this.githubProvider, this.websiteProvider, {
-          ...input,
-          use_cache: input.use_cache ?? true,
-        });
-      },
-    });
-
-    this.registerTool({
-      name: 'get_framework_examples',
-      description: 'Get code examples for specific patterns within a framework.',
-      inputSchema: z.object({
-        framework: z.string().min(1),
-        pattern: z.string().optional(),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework: string; pattern?: string };
-        return getFrameworkExamples(this.registry, this.cache, this.githubProvider, this.websiteProvider, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'search_documentation',
-      description: "Search within a framework's documentation for specific topics or keywords.",
-      inputSchema: z.object({
-        framework: z.string().min(1),
-        query: z.string().min(1),
-        limit: z.number().min(1).max(50).default(10),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework: string; query: string; limit?: number };
-        return searchDocumentation(this.registry, this.cache, this.githubProvider, this.websiteProvider, {
-          ...input,
-          limit: input.limit ?? 10,
-        });
-      },
-    });
-
-    // ==================== Context Enhancement Tools ====================
-
-    this.registerTool({
-      name: 'get_framework_context',
-      description: 'Get relevant context for multiple frameworks based on the development task. Combines documentation, patterns, and best practices.',
-      inputSchema: z.object({
-        frameworks: z.array(z.string().min(1)).min(1),
-        task_description: z.string().min(1),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { frameworks: string[]; task_description: string };
-        return getFrameworkContext(this.registry, this.cache, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'analyze_code_compatibility',
-      description: 'Analyze code for framework compatibility and suggest improvements.',
-      inputSchema: z.object({
-        code: z.string().min(1),
-        frameworks: z.array(z.string().min(1)).min(1),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { code: string; frameworks: string[] };
-        return analyzeCodeCompatibility(this.registry, input);
-      },
-    });
-
-    // ==================== Cache Management Tools ====================
-
-    this.registerTool({
-      name: 'check_framework_updates',
-      description: 'Check if framework documentation has been updated since last cache.',
-      inputSchema: z.object({
-        framework: z.string().min(1),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework: string };
-        return checkFrameworkUpdates(this.registry, this.cache, this.githubProvider, input);
-      },
-    });
-
-    this.registerTool({
-      name: 'refresh_framework_cache',
-      description: 'Refresh cached documentation for frameworks.',
-      inputSchema: z.object({
-        framework: z.string().optional(),
-        force: z.boolean().default(false),
-      }),
-      handler: async (args: unknown) => {
-        const input = args as { framework?: string; force?: boolean };
-        return refreshFrameworkCache(this.registry, this.cache, this.githubProvider, this.websiteProvider, {
-          ...input,
-          force: input.force ?? false,
-        });
-      },
-    });
-
-    this.registerTool({
-      name: 'get_cache_stats',
-      description: 'Get detailed cache statistics and performance metrics.',
-      inputSchema: z.object({}),
-      handler: async () => {
-        return getCacheStats(this.registry, this.cache);
-      },
-    });
-
-    logger.info('Tools registered', { count: this.tools.size });
-  }
-
-  /**
-   * Register a single tool
-   */
-  private registerTool(tool: ToolDefinition): void {
-    this.tools.set(tool.name, tool);
-    logger.debug('Tool registered', { name: tool.name });
-  }
-
-  /**
-   * Get list of all registered tools (for MCP tools/list)
-   */
-  getToolsList(): Array<{
-    name: string;
-    description: string;
-    inputSchema: unknown;
-  }> {
-    const toolsList: Array<{
-      name: string;
-      description: string;
-      inputSchema: unknown;
-    }> = [];
-
-    for (const tool of this.tools.values()) {
-      toolsList.push({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: zodToJsonSchema(tool.inputSchema),
-      });
-    }
-
-    return toolsList;
-  }
-
-  /**
-   * Call a tool by name (for MCP tools/call)
-   */
-  async callTool(name: string, args: unknown): Promise<{
-    content: Array<{ type: string; text: string }>;
-    isError?: boolean;
-  }> {
-    const tool = this.tools.get(name);
-    if (!tool) {
-      return {
-        content: [{ type: 'text', text: `Error: Unknown tool '${name}'` }],
-        isError: true,
-      };
-    }
-
-    try {
-      const result = await tool.handler(args);
-      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      const isError = typeof result === 'string' && result.startsWith('Error:');
-
-      return {
-        content: [{ type: 'text', text }],
-        isError,
-      };
-    } catch (error) {
-      logger.error('Tool execution failed', {
-        tool: name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-
-      return {
-        content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
-        isError: true,
-      };
-    }
-  }
+function formatResult(result: unknown): { content: Array<{ type: 'text'; text: string }> } {
+  const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+  return {
+    content: [{ type: 'text', text }],
+  };
 }
 
 /**
- * Convert Zod schema to JSON Schema (simplified)
+ * Format error result for MCP response
  */
-function zodToJsonSchema(schema: z.ZodType<unknown>): unknown {
-  // This is a simplified conversion - for production, use a proper library like zod-to-json-schema
-  // Cast to any to access internal Zod properties
-  const def = schema._def as any;
-  const typeName = def.typeName as string;
+function formatError(error: unknown): { content: Array<{ type: 'text'; text: string }>; isError: true } {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    content: [{ type: 'text', text: `Error: ${message}` }],
+    isError: true,
+  };
+}
 
-  if (typeName === 'ZodObject') {
-    const shape = def.shape();
-    const properties: Record<string, unknown> = {};
-    const required: string[] = [];
+/**
+ * Get the MCP server instance, creating it if necessary
+ */
+export async function getServer(): Promise<McpServer> {
+  if (serverInstance) {
+    return serverInstance;
+  }
 
-    for (const [key, value] of Object.entries(shape)) {
-      const zodValue = value as z.ZodType<unknown>;
-      properties[key] = zodToJsonSchema(zodValue);
+  logger.info('Initializing Augments MCP Server', { version: SERVER_VERSION });
 
-      if (!zodValue.isOptional()) {
-        required.push(key);
+  // Initialize dependencies
+  const deps = await initializeDependencies();
+
+  logger.info('Dependencies initialized', {
+    frameworks: deps.registry.getFrameworkCount(),
+    categories: deps.registry.getCategories(),
+  });
+
+  // Create SDK McpServer
+  const server = new McpServer({
+    name: 'augments-mcp-server',
+    version: SERVER_VERSION,
+  });
+
+  // ==================== Discovery Tools ====================
+
+  server.tool(
+    'list_available_frameworks',
+    'List all available frameworks, optionally filtered by category. Returns framework information including name, category, and description.',
+    {
+      category: z.enum(FrameworkCategories).optional().describe('Filter by framework category'),
+    },
+    async ({ category }) => {
+      try {
+        const result = await listAvailableFrameworks(deps.registry, { category });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'list_available_frameworks', error });
+        return formatError(error);
       }
     }
+  );
 
-    return {
-      type: 'object',
-      properties,
-      required: required.length > 0 ? required : undefined,
-    };
-  }
+  server.tool(
+    'search_frameworks',
+    'Search for frameworks by name, keyword, or feature. Returns a ranked list of matching frameworks with relevance scores.',
+    {
+      query: z.string().min(1).describe('Search query'),
+    },
+    async ({ query }) => {
+      try {
+        const result = await searchFrameworks(deps.registry, { query });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'search_frameworks', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodString') {
-    return { type: 'string' };
-  }
+  server.tool(
+    'get_framework_info',
+    'Get detailed information about a specific framework including sources, features, and patterns.',
+    {
+      framework: z.string().min(1).describe('Framework name'),
+    },
+    async ({ framework }) => {
+      try {
+        const result = await getFrameworkInfo(deps.registry, { framework });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_framework_info', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodNumber') {
-    return { type: 'number' };
-  }
+  server.tool(
+    'get_registry_stats',
+    'Get statistics about the framework registry including total frameworks and categories.',
+    {},
+    async () => {
+      try {
+        const result = await getRegistryStats(deps.registry);
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_registry_stats', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodBoolean') {
-    return { type: 'boolean' };
-  }
+  // ==================== Documentation Tools ====================
 
-  if (typeName === 'ZodArray') {
-    return {
-      type: 'array',
-      items: zodToJsonSchema(def.type),
-    };
-  }
+  server.tool(
+    'get_framework_docs',
+    'Retrieve comprehensive documentation for a specific framework. Fetches from GitHub or official documentation.',
+    {
+      framework: z.string().min(1).describe('Framework name'),
+      section: z.string().optional().describe('Specific documentation section'),
+      use_cache: z.boolean().default(true).describe('Whether to use cached documentation'),
+    },
+    async ({ framework, section, use_cache }) => {
+      try {
+        const result = await getFrameworkDocs(deps.registry, deps.cache, deps.githubProvider, deps.websiteProvider, {
+          framework,
+          section,
+          use_cache: use_cache ?? true,
+        });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_framework_docs', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodOptional') {
-    return zodToJsonSchema(def.innerType);
-  }
+  server.tool(
+    'get_framework_examples',
+    'Get code examples for specific patterns within a framework.',
+    {
+      framework: z.string().min(1).describe('Framework name'),
+      pattern: z.string().optional().describe('Specific pattern to get examples for'),
+    },
+    async ({ framework, pattern }) => {
+      try {
+        const result = await getFrameworkExamples(deps.registry, deps.cache, deps.githubProvider, deps.websiteProvider, {
+          framework,
+          pattern,
+        });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_framework_examples', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodDefault') {
-    return zodToJsonSchema(def.innerType);
-  }
+  server.tool(
+    'search_documentation',
+    "Search within a framework's documentation for specific topics or keywords.",
+    {
+      framework: z.string().min(1).describe('Framework name'),
+      query: z.string().min(1).describe('Search query'),
+      limit: z.number().min(1).max(50).default(10).describe('Maximum number of results'),
+    },
+    async ({ framework, query, limit }) => {
+      try {
+        const result = await searchDocumentation(deps.registry, deps.cache, deps.githubProvider, deps.websiteProvider, {
+          framework,
+          query,
+          limit: limit ?? 10,
+        });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'search_documentation', error });
+        return formatError(error);
+      }
+    }
+  );
 
-  if (typeName === 'ZodEnum') {
-    return {
-      type: 'string',
-      enum: def.values,
-    };
-  }
+  // ==================== Context Enhancement Tools ====================
 
-  return { type: 'string' };
-}
+  server.tool(
+    'get_framework_context',
+    'Get relevant context for multiple frameworks based on the development task. Combines documentation, patterns, and best practices.',
+    {
+      frameworks: z.array(z.string().min(1)).min(1).describe('List of framework names'),
+      task_description: z.string().min(1).describe('Description of the development task'),
+    },
+    async ({ frameworks, task_description }) => {
+      try {
+        const result = await getFrameworkContext(deps.registry, deps.cache, { frameworks, task_description });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_framework_context', error });
+        return formatError(error);
+      }
+    }
+  );
 
-// Singleton instance for serverless environments
-let serverInstance: AugmentsMcpServer | null = null;
+  server.tool(
+    'analyze_code_compatibility',
+    'Analyze code for framework compatibility and suggest improvements.',
+    {
+      code: z.string().min(1).describe('Code to analyze'),
+      frameworks: z.array(z.string().min(1)).min(1).describe('List of frameworks to check compatibility with'),
+    },
+    async ({ code, frameworks }) => {
+      try {
+        const result = await analyzeCodeCompatibility(deps.registry, { code, frameworks });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'analyze_code_compatibility', error });
+        return formatError(error);
+      }
+    }
+  );
 
-export async function getServer(): Promise<AugmentsMcpServer> {
-  if (!serverInstance) {
-    serverInstance = new AugmentsMcpServer();
-    await serverInstance.initialize();
-  }
-  return serverInstance;
+  // ==================== Cache Management Tools ====================
+
+  server.tool(
+    'check_framework_updates',
+    'Check if framework documentation has been updated since last cache.',
+    {
+      framework: z.string().min(1).describe('Framework name'),
+    },
+    async ({ framework }) => {
+      try {
+        const result = await checkFrameworkUpdates(deps.registry, deps.cache, deps.githubProvider, { framework });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'check_framework_updates', error });
+        return formatError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'refresh_framework_cache',
+    'Refresh cached documentation for frameworks.',
+    {
+      framework: z.string().optional().describe('Framework name (optional, refreshes all if not specified)'),
+      force: z.boolean().default(false).describe('Force refresh even if cache is valid'),
+    },
+    async ({ framework, force }) => {
+      try {
+        const result = await refreshFrameworkCache(deps.registry, deps.cache, deps.githubProvider, deps.websiteProvider, {
+          framework,
+          force: force ?? false,
+        });
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'refresh_framework_cache', error });
+        return formatError(error);
+      }
+    }
+  );
+
+  server.tool(
+    'get_cache_stats',
+    'Get detailed cache statistics and performance metrics.',
+    {},
+    async () => {
+      try {
+        const result = await getCacheStats(deps.registry, deps.cache);
+        return formatResult(result);
+      } catch (error) {
+        logger.error('Tool execution failed', { tool: 'get_cache_stats', error });
+        return formatError(error);
+      }
+    }
+  );
+
+  logger.info('MCP Server initialized successfully', {
+    tools: 12,
+    version: SERVER_VERSION,
+  });
+
+  serverInstance = server;
+  return server;
 }
