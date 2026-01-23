@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docker deployment support
 - diskcache, FastMCP, httpx dependencies
 
+### Fixed
+- SDK transport compatibility for Claude Code integration
+
 ### Technical Stack
 - TypeScript 5.4+
 - Next.js 14
