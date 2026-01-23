@@ -1,0 +1,295 @@
+/**
+ * GitHub API client with rate limiting
+ */
+
+import { Octokit } from '@octokit/rest';
+import { config } from '@/config';
+import { getLogger } from '@/utils/logger';
+
+const logger = getLogger('github-client');
+
+export class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
+export class GitHubClient {
+  private octokit: Octokit;
+  private rateLimitRemaining: number = 5000;
+  private rateLimitReset: Date = new Date();
+  private lastRequestTime: Date = new Date();
+
+  constructor(token?: string) {
+    this.octokit = new Octokit({
+      auth: token || config.githubToken,
+      userAgent: 'Augments-MCP-Server/3.0',
+      timeZone: 'UTC',
+    });
+
+    logger.info('GitHub client initialized', {
+      hasToken: Boolean(token || config.githubToken),
+    });
+  }
+
+  /**
+   * Get file content from a repository
+   */
+  async getFileContent(
+    repo: string,
+    path: string,
+    branch: string = 'main'
+  ): Promise<string | null> {
+    const [owner, repoName] = repo.split('/');
+
+    try {
+      await this.checkRateLimit();
+
+      const response = await this.octokit.repos.getContent({
+        owner,
+        repo: repoName,
+        path: path.replace(/^\//, ''),
+        ref: branch,
+      });
+
+      this.updateRateLimitFromHeaders(response.headers);
+
+      if ('content' in response.data && response.data.type === 'file') {
+        const content = Buffer.from(response.data.content, 'base64').toString('utf-8');
+        logger.debug('Retrieved file content', {
+          repo,
+          path,
+          size: content.length,
+        });
+        return content;
+      }
+
+      return null;
+    } catch (error: any) {
+      if (error.status === 404) {
+        logger.debug('File not found', { repo, path });
+        return null;
+      }
+      if (error.status === 403 && error.message?.includes('rate limit')) {
+        throw new RateLimitError('GitHub API rate limit exceeded');
+      }
+      logger.error('GitHub getFileContent error', {
+        repo,
+        path,
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get directory contents from a repository
+   */
+  async getDirectoryContents(
+    repo: string,
+    path: string = '',
+    branch: string = 'main'
+  ): Promise<Array<{ name: string; type: string; path: string }>> {
+    const [owner, repoName] = repo.split('/');
+
+    try {
+      await this.checkRateLimit();
+
+      const response = await this.octokit.repos.getContent({
+        owner,
+        repo: repoName,
+        path: path.replace(/^\//, ''),
+        ref: branch,
+      });
+
+      this.updateRateLimitFromHeaders(response.headers);
+
+      if (Array.isArray(response.data)) {
+        const contents = response.data.map((item) => ({
+          name: item.name,
+          type: item.type,
+          path: item.path,
+        }));
+        logger.debug('Retrieved directory contents', {
+          repo,
+          path,
+          count: contents.length,
+        });
+        return contents;
+      }
+
+      return [];
+    } catch (error: any) {
+      if (error.status === 404) {
+        logger.debug('Directory not found', { repo, path });
+        return [];
+      }
+      logger.error('GitHub getDirectoryContents error', {
+        repo,
+        path,
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get recent commits for a repository or path
+   */
+  async getCommits(
+    repo: string,
+    options: {
+      path?: string;
+      since?: Date;
+      limit?: number;
+    } = {}
+  ): Promise<Array<{ sha: string; message: string; date: string }>> {
+    const [owner, repoName] = repo.split('/');
+
+    try {
+      await this.checkRateLimit();
+
+      const response = await this.octokit.repos.listCommits({
+        owner,
+        repo: repoName,
+        path: options.path,
+        since: options.since?.toISOString(),
+        per_page: Math.min(options.limit || 10, 100),
+      });
+
+      this.updateRateLimitFromHeaders(response.headers);
+
+      const commits = response.data.map((commit) => ({
+        sha: commit.sha,
+        message: commit.commit.message,
+        date: commit.commit.committer?.date || '',
+      }));
+
+      logger.debug('Retrieved commits', {
+        repo,
+        path: options.path,
+        count: commits.length,
+      });
+
+      return commits;
+    } catch (error: any) {
+      if (error.status === 404) {
+        return [];
+      }
+      logger.error('GitHub getCommits error', {
+        repo,
+        error: error.message,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Search code in a repository
+   */
+  async searchCode(
+    repo: string,
+    query: string,
+    extension?: string
+  ): Promise<Array<{ path: string; url: string }>> {
+    try {
+      await this.checkRateLimit();
+
+      let searchQuery = `${query} repo:${repo}`;
+      if (extension) {
+        searchQuery += ` extension:${extension}`;
+      }
+
+      const response = await this.octokit.search.code({
+        q: searchQuery,
+        sort: 'indexed',
+        order: 'desc',
+        per_page: 30,
+      });
+
+      this.updateRateLimitFromHeaders(response.headers);
+
+      const results = response.data.items.map((item) => ({
+        path: item.path,
+        url: item.html_url,
+      }));
+
+      logger.debug('Code search completed', {
+        repo,
+        query,
+        results: results.length,
+      });
+
+      return results;
+    } catch (error: any) {
+      if (error.status === 403) {
+        logger.warn('Code search not available (rate limited or requires auth)');
+        return [];
+      }
+      logger.error('GitHub searchCode error', {
+        repo,
+        query,
+        error: error.message,
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Get rate limit info
+   */
+  getRateLimitInfo(): {
+    remaining: number;
+    reset_time: string;
+    seconds_until_reset: number;
+  } {
+    const secondsUntilReset = Math.max(
+      0,
+      Math.floor((this.rateLimitReset.getTime() - Date.now()) / 1000)
+    );
+
+    return {
+      remaining: this.rateLimitRemaining,
+      reset_time: this.rateLimitReset.toISOString(),
+      seconds_until_reset: secondsUntilReset,
+    };
+  }
+
+  private async checkRateLimit(): Promise<void> {
+    if (this.rateLimitRemaining <= 1) {
+      if (Date.now() < this.rateLimitReset.getTime()) {
+        const waitTime = Math.ceil((this.rateLimitReset.getTime() - Date.now()) / 1000);
+        logger.warn('Rate limit exceeded, waiting', { wait_seconds: waitTime });
+        await new Promise((resolve) => setTimeout(resolve, waitTime * 1000));
+      }
+    }
+
+    // Respect minimum delay between requests (100ms)
+    const timeSinceLast = Date.now() - this.lastRequestTime.getTime();
+    if (timeSinceLast < 100) {
+      await new Promise((resolve) => setTimeout(resolve, 100 - timeSinceLast));
+    }
+
+    this.lastRequestTime = new Date();
+  }
+
+  private updateRateLimitFromHeaders(headers: Record<string, any>): void {
+    if (headers['x-ratelimit-remaining']) {
+      this.rateLimitRemaining = parseInt(headers['x-ratelimit-remaining'], 10);
+    }
+    if (headers['x-ratelimit-reset']) {
+      this.rateLimitReset = new Date(parseInt(headers['x-ratelimit-reset'], 10) * 1000);
+    }
+  }
+}
+
+// Singleton instance
+let clientInstance: GitHubClient | null = null;
+
+export function getGitHubClient(): GitHubClient {
+  if (!clientInstance) {
+    clientInstance = new GitHubClient();
+  }
+  return clientInstance;
+}
