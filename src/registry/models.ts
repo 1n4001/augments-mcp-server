@@ -38,46 +38,54 @@ export function configToInfo(config: FrameworkConfig): FrameworkInfo {
 }
 
 /**
+ * Normalize text for search by treating hyphens, underscores, and spaces as equivalent
+ */
+function normalizeForSearch(text: string): string {
+  return text.toLowerCase().replace(/[-_]/g, ' ');
+}
+
+/**
  * Calculate search relevance score for a framework
  */
 export function calculateSearchScore(
   config: FrameworkConfig,
   query: string
 ): { score: number; matched_fields: string[] } {
-  const queryLower = query.toLowerCase();
+  const queryNorm = normalizeForSearch(query);
   let score = 0;
   const matched_fields: string[] = [];
 
   // Exact name match gets highest score
-  if (queryLower === config.name.toLowerCase()) {
+  const nameNorm = normalizeForSearch(config.name);
+  if (queryNorm === nameNorm) {
     score += 100;
     matched_fields.push('name');
-  } else if (config.name.toLowerCase().includes(queryLower)) {
+  } else if (nameNorm.includes(queryNorm)) {
     score += 50;
     matched_fields.push('name');
   }
 
   // Display name match
-  if (config.display_name.toLowerCase().includes(queryLower)) {
+  if (normalizeForSearch(config.display_name).includes(queryNorm)) {
     score += 30;
     matched_fields.push('display_name');
   }
 
   // Category match
-  if (queryLower === config.category.toLowerCase()) {
+  if (queryNorm === normalizeForSearch(config.category)) {
     score += 25;
     matched_fields.push('category');
   }
 
   // Type match
-  if (config.type.toLowerCase().includes(queryLower)) {
+  if (normalizeForSearch(config.type).includes(queryNorm)) {
     score += 20;
     matched_fields.push('type');
   }
 
   // Key features match
   for (const feature of config.key_features) {
-    if (feature.toLowerCase().includes(queryLower)) {
+    if (normalizeForSearch(feature).includes(queryNorm)) {
       score += 15;
       if (!matched_fields.includes('key_features')) {
         matched_fields.push('key_features');
@@ -87,7 +95,7 @@ export function calculateSearchScore(
 
   // Common patterns match
   for (const pattern of config.common_patterns) {
-    if (pattern.toLowerCase().includes(queryLower)) {
+    if (normalizeForSearch(pattern).includes(queryNorm)) {
       score += 10;
       if (!matched_fields.includes('common_patterns')) {
         matched_fields.push('common_patterns');
