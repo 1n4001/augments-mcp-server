@@ -1,60 +1,44 @@
 ![Augments MCP Server](https://raw.githubusercontent.com/augmnt/augments-mcp-server/main/banner.png)
 
-A comprehensive framework documentation provider for Claude Code via Model Context Protocol (MCP). Provides real-time access to framework documentation, context-aware assistance, and intelligent caching to enhance development workflows.
+A next-generation framework documentation provider for Claude Code via Model Context Protocol (MCP). Provides **query-focused API context** by extracting TypeScript definitions directly from npm packages - delivering minimal, accurate information instead of dumping entire documentation pages.
 
 mcp-name: dev.augments/mcp
 
-## Overview
+## What's New in v4
 
-Augments MCP Server is a documentation retrieval system that integrates with Claude Code to provide comprehensive, up-to-date framework information. It features advanced caching strategies, multi-source documentation aggregation, and intelligent context enhancement for modern development workflows.
+**Version 4.0** introduces a fundamentally new approach to framework documentation:
 
-**Version 3.0** - TypeScript implementation optimized for Vercel serverless deployment.
+| Old Approach (v3) | New Approach (v4) |
+|-------------------|-------------------|
+| Fetch entire documentation pages | Extract specific API signatures |
+| ~50KB of context per query | ~500 tokens of precise context |
+| Manual framework registry (85) | Auto-discovery via npm (millions) |
+| No version support | Version-specific queries |
+| Prose documentation | TypeScript definitions (source of truth) |
 
-## Key Features
+### Why TypeScript Definitions?
 
-### Comprehensive Framework Support
-- **85+ Frameworks**: Web, Backend, Mobile, AI/ML, Design, DevOps, and Tools
-- **Multi-Source Documentation**: GitHub repositories, official websites, and examples
-- **Real-Time Updates**: Automatic documentation refresh with smart caching
-- **Intelligent Prioritization**: Framework importance-based ranking
+Documentation can be outdated or wrong. **TypeScript definitions can't lie** - they're compiled and must match the actual API. When you ask "what are the params for useEffect?", v4 gives you:
 
-### Advanced Caching System
-- **TTL-Based Strategies**: Different cache durations for stable/beta/dev versions
-- **Serverless Optimized**: Upstash Redis for Vercel edge performance
-- **Smart Invalidation**: Automatic cache refresh based on source updates
-- **Cache Analytics**: Detailed statistics and performance monitoring
+```typescript
+function useEffect(effect: EffectCallback, deps?: DependencyList): void
+```
 
-### Context Enhancement
-- **Multi-Framework Context**: Combine documentation from multiple frameworks
-- **Code Compatibility Analysis**: Detect framework compatibility issues
-- **Pattern Recognition**: Common usage patterns and best practices
-- **Task-Specific Guidance**: Context tailored to development tasks
-
-### Developer Experience
-- **12 MCP Tools**: Comprehensive documentation lifecycle coverage
-- **Structured Responses**: Clean, validated JSON outputs
-- **Error Resilience**: Graceful degradation with detailed error messages
-- **Edge Performance**: Optimized for serverless environments
+Not 5KB of tutorial explaining what effects are.
 
 ## Quick Start
 
 ### Option 1: Hosted MCP Server (Recommended)
 
-Connect directly to our hosted server - no installation required!
-
-#### Using Claude Code CLI
-
 ```bash
 # Add the hosted MCP server
 claude mcp add --transport http augments https://mcp.augments.dev/mcp
 
-# Verify the server is configured
+# Verify configuration
 claude mcp list
 ```
 
-#### Using Cursor
-
-Add to your MCP configuration:
+### Option 2: Using Cursor
 
 ```json
 {
@@ -67,57 +51,28 @@ Add to your MCP configuration:
 }
 ```
 
-#### Using the Server
-
-Once configured, access framework documentation directly:
+### Using the v4 Tools
 
 ```
-@augments list frameworks in the web category
-@augments get documentation for tailwindcss
-@augments get context for nextjs, tailwindcss, and react
+# Get API signature with minimal context
+@augments get_api_context query="useEffect cleanup" framework="react" version="19"
+
+# Search for APIs across frameworks
+@augments search_apis query="state management hook"
+
+# Get version information
+@augments get_version_info framework="react" fromVersion="18" toVersion="19"
 ```
-
-### Option 2: Self-Host on Vercel
-
-Deploy your own instance to Vercel for customization or private use.
-
-#### Prerequisites
-- Node.js 18+
-- Vercel account
-- (Optional) Upstash Redis account for caching
-
-#### Deploy to Vercel
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/augmnt/augments-mcp-server&env=GITHUB_TOKEN,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN)
-
-Or deploy manually:
-
-```bash
-# Clone the repository
-git clone https://github.com/augmnt/augments-mcp-server.git
-cd augments-mcp-server
-
-# Install dependencies
-npm install
-
-# Run locally
-npm run dev
-
-# Deploy to Vercel
-vercel
-```
-
-#### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_TOKEN` | Optional | GitHub token for higher API rate limits |
-| `UPSTASH_REDIS_REST_URL` | Optional | Upstash Redis URL for caching |
-| `UPSTASH_REDIS_REST_TOKEN` | Optional | Upstash Redis token |
-| `RATE_LIMIT_ENABLED` | Optional | Enable rate limiting (default: true) |
-| `RATE_LIMIT_REQUESTS` | Optional | Requests per window (default: 100) |
 
 ## MCP Tools
+
+### v4 API Context Tools (New)
+
+| Tool | Description |
+|------|-------------|
+| `get_api_context` | Query-focused TypeScript extraction - returns minimal API signatures |
+| `search_apis` | Search for APIs across frameworks by keyword |
+| `get_version_info` | Get npm version info, compare versions, detect breaking changes |
 
 ### Framework Discovery
 
@@ -151,112 +106,137 @@ vercel
 | `refresh_framework_cache` | Refresh cache |
 | `get_cache_stats` | Cache statistics |
 
-## Architecture
+## v4 Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Query: "useEffect cleanup react 19"                    │
+└─────────────────────┬───────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────────────┐
+│  Query Parser                                           │
+│  • Identify framework: react                            │
+│  • Identify concept: useEffect                          │
+│  • Identify version: 19                                 │
+└─────────────────────┬───────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────────────┐
+│  Type Fetcher                                           │
+│  • Fetch @types/react@19 from npm CDN                   │
+│  • Handle barrel exports (sub-module fetching)          │
+│  • Cache with TTL                                       │
+└─────────────────────┬───────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────────────┐
+│  Type Parser (TypeScript Compiler API)                  │
+│  • Extract useEffect signature                          │
+│  • Resolve related types (EffectCallback, etc.)         │
+│  • Find overloads                                       │
+└─────────────────────┬───────────────────────────────────┘
+                      ↓
+┌─────────────────────────────────────────────────────────┐
+│  Return ~500 tokens:                                    │
+│  {                                                      │
+│    api: { name, signature, parameters, returnType },    │
+│    relatedTypes: { EffectCallback: "...", ... },        │
+│    examples: [...],                                     │
+│    version: "19.0.4"                                    │
+│  }                                                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Source Structure
 
 ```
 src/
-├── config/              # Environment configuration
-├── registry/            # Framework registry management
-│   ├── manager.ts       # Registry manager with JSON loading
-│   └── models.ts        # Zod schemas for validation
-├── cache/               # Serverless cache layer
-│   ├── kv-cache.ts      # Upstash Redis cache
-│   └── strategies.ts    # TTL strategies
-├── providers/           # Documentation providers
-│   ├── github.ts        # GitHub docs provider
-│   └── website.ts       # Website scraper
-├── tools/               # MCP tool implementations
-│   ├── discovery.ts     # Framework discovery tools
-│   ├── documentation.ts # Documentation tools
-│   ├── context.ts       # Context enhancement tools
-│   └── cache-management.ts # Cache management
-├── middleware/          # Request middleware
-│   ├── rate-limit.ts    # Upstash rate limiting
-│   └── auth.ts          # API key validation
-└── server.ts            # McpServer setup
-
-app/api/mcp/route.ts     # Next.js API route for MCP
-frameworks/              # JSON framework configurations
-```
-
-### Framework Configuration Schema
-
-```json
-{
-  "name": "nextjs",
-  "display_name": "Next.js",
-  "category": "web",
-  "type": "react-framework",
-  "version": "latest",
-  "sources": {
-    "documentation": {
-      "github": {
-        "repo": "vercel/next.js",
-        "docs_path": "docs",
-        "branch": "canary"
-      },
-      "website": "https://nextjs.org/docs"
-    },
-    "examples": {
-      "github": {
-        "repo": "vercel/next.js",
-        "docs_path": "examples",
-        "branch": "canary"
-      }
-    }
-  },
-  "context_files": ["docs/getting-started/installation.mdx"],
-  "key_features": ["app-router", "server-components", "api-routes"],
-  "common_patterns": ["file-based-routing", "data-fetching"],
-  "priority": 90
-}
+├── core/                    # v4 Core modules
+│   ├── query-parser.ts      # Parse natural language → framework + concept
+│   ├── type-fetcher.ts      # Fetch .d.ts from npm/unpkg/jsdelivr
+│   ├── type-parser.ts       # Parse TypeScript, extract signatures
+│   ├── example-extractor.ts # Fetch code examples from GitHub
+│   └── version-registry.ts  # npm registry integration
+├── tools/
+│   ├── v4/                  # v4 API context tools
+│   │   ├── get-api-context.ts
+│   │   ├── search-apis.ts
+│   │   └── get-version-info.ts
+│   ├── discovery.ts         # Framework discovery tools
+│   ├── documentation.ts     # Documentation tools
+│   ├── context.ts           # Context enhancement tools
+│   └── cache-management.ts  # Cache management
+├── registry/                # Framework registry (v3 compatibility)
+├── providers/               # Documentation providers
+├── cache/                   # Caching layer
+└── server.ts                # MCP server setup (15 tools)
 ```
 
 ## Supported Frameworks
 
-**85+ frameworks** across 10 categories:
+### v4 Auto-Discovery
+Any npm package with TypeScript types can be queried - no manual configuration needed:
+- Bundled types (`"types": "./dist/index.d.ts"` in package.json)
+- DefinitelyTyped (`@types/package-name`)
 
-| Category | Count | Examples |
-|----------|-------|----------|
-| Web | 25 | React, Next.js, Vue.js, Tailwind CSS, Angular |
-| Backend | 18 | FastAPI, Express, NestJS, Django, Flask |
-| AI/ML | 14 | PyTorch, TensorFlow, LangChain, Hugging Face |
-| Mobile | 6 | React Native, Flutter, Expo |
-| Database | 5 | Prisma, TypeORM, Mongoose |
-| State Management | 4 | Redux, Zustand, MobX |
-| Testing | 5 | Jest, Playwright, Cypress, pytest |
-| DevOps | 4 | Docker, Kubernetes, Terraform |
-| Tools | 7 | Vite, Webpack, ESLint, Prettier |
-| Design | 1 | shadcn/ui |
+### Tested & Optimized
+| Framework | Package | Features |
+|-----------|---------|----------|
+| React | `react`, `@types/react` | All hooks, components, types |
+| TanStack Query | `@tanstack/react-query` | useQuery, useMutation, etc. |
+| React Hook Form | `react-hook-form` | useForm, useController, etc. |
+| Supabase | `@supabase/supabase-js` | createClient, auth, storage |
+| Express | `express` | Router, middleware |
+| Mongoose | `mongoose` | Schema, Model |
+| Next.js | `next` | App Router, Server Components |
+| Vue 3 | `vue` | Composition API |
+| Zod | `zod` | Schema validation |
+| tRPC | `@trpc/client` | Type-safe APIs |
+| Prisma | `@prisma/client` | Database ORM |
 
-## Adding New Frameworks
+### Legacy Framework Registry
+85+ frameworks with manual documentation sources are still available via v3 tools.
 
-Create a JSON file in the appropriate category directory:
+## Self-Hosting
+
+### Deploy to Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/augmnt/augments-mcp-server&env=GITHUB_TOKEN,UPSTASH_REDIS_REST_URL,UPSTASH_REDIS_REST_TOKEN)
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Optional | GitHub token for higher API rate limits |
+| `UPSTASH_REDIS_REST_URL` | Optional | Upstash Redis URL for caching |
+| `UPSTASH_REDIS_REST_TOKEN` | Optional | Upstash Redis token |
+
+### Local Development
 
 ```bash
-frameworks/web/my-framework.json
-```
-
-The server automatically detects new framework configurations.
-
-## Development
-
-```bash
-# Install dependencies
+# Clone and install
+git clone https://github.com/augmnt/augments-mcp-server.git
+cd augments-mcp-server
 npm install
 
 # Run development server
 npm run dev
 
+# Build
+npm run build
+
 # Type check
 npm run type-check
-
-# Lint
-npm run lint
-
-# Build for production
-npm run build
 ```
+
+## How v4 Compares to Context7
+
+| Aspect | Context7 | Augments v4 |
+|--------|----------|-------------|
+| **Source** | Parsed prose docs | TypeScript definitions |
+| **Accuracy** | Docs can be wrong | Types must be correct |
+| **Context size** | ~5-10KB chunks | ~500 tokens |
+| **LLM cost** | Pays for ranking | Zero - pure data retrieval |
+| **Freshness** | Crawl schedule | On-demand from npm |
+| **Coverage** | Manual submission | Any npm package with types |
 
 ## Contributing
 
@@ -277,4 +257,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-**Built for the Claude Code ecosystem**
+**Built for the Claude Code ecosystem** | **Version 4.0.0**
