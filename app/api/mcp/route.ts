@@ -45,7 +45,7 @@ export async function GET(request: Request) {
         status: 'healthy',
         transport: 'streamable-http',
         endpoint: '/api/mcp',
-        tools: 12,
+        tools: 15,
       }),
       {
         status: 200,
