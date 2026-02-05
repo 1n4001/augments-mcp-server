@@ -3,6 +3,11 @@
  *
  * Uses TypeScript compiler API to parse .d.ts files and extract API signatures.
  * Given a concept (e.g., "useEffect"), finds its signature and resolves type references.
+ *
+ * Features:
+ * - AST parse caching (djb2 hash-based, max 50 entries)
+ * - Enhanced JSDoc extraction (@param, @returns, @example, @deprecated, @see)
+ * - Smart response filtering with maxResults and scoring
  */
 
 import ts from 'typescript';
@@ -23,6 +28,10 @@ export interface TypeDefinition {
   generics?: string[];
   members?: MemberInfo[];
   extends?: string[];
+  deprecated?: boolean;
+  deprecatedMessage?: string;
+  seeAlso?: string[];
+  examples?: string[];
   location?: {
     line: number;
     column: number;
@@ -66,6 +75,19 @@ export interface ApiSignature {
   overloads?: string[];
   relatedTypes: Record<string, string>;
   examples?: string[];
+  deprecated?: boolean;
+  deprecatedMessage?: string;
+}
+
+/**
+ * djb2 hash function for fast content hashing
+ */
+function djb2Hash(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+  }
+  return hash >>> 0; // Convert to unsigned
 }
 
 /**
@@ -73,6 +95,8 @@ export interface ApiSignature {
  */
 export class TypeParser {
   private printer: ts.Printer;
+  private parseCache: Map<number, ParseResult> = new Map();
+  private readonly MAX_PARSE_CACHE_SIZE = 50;
 
   constructor() {
     this.printer = ts.createPrinter({
@@ -82,9 +106,18 @@ export class TypeParser {
   }
 
   /**
-   * Parse TypeScript definition content and extract all type definitions
+   * Parse TypeScript definition content and extract all type definitions.
+   * Results are cached based on content hash.
    */
   parse(content: string, fileName: string = 'types.d.ts'): ParseResult {
+    // Check parse cache
+    const contentHash = djb2Hash(content);
+    const cached = this.parseCache.get(contentHash);
+    if (cached) {
+      logger.debug('Parse cache hit', { fileName, hash: contentHash });
+      return cached;
+    }
+
     const definitions: TypeDefinition[] = [];
     const relatedTypes = new Map<string, TypeDefinition>();
     const errors: string[] = [];
@@ -124,13 +157,24 @@ export class TypeParser {
       );
     }
 
+    const result = { definitions, relatedTypes, errors };
+
+    // Cache the result (evict oldest if at capacity)
+    if (this.parseCache.size >= this.MAX_PARSE_CACHE_SIZE) {
+      const firstKey = this.parseCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.parseCache.delete(firstKey);
+      }
+    }
+    this.parseCache.set(contentHash, result);
+
     logger.debug('Parsed type definitions', {
       fileName,
       definitionCount: definitions.length,
       errorCount: errors.length,
     });
 
-    return { definitions, relatedTypes, errors };
+    return result;
   }
 
   /**
@@ -170,6 +214,9 @@ export class TypeParser {
     // Collect related types from parameter and return types
     const relatedTypes = this.collectRelatedTypes(primaryMatch, parseResult);
 
+    // Collect examples from JSDoc
+    const examples = primaryMatch.examples || [];
+
     return {
       name: primaryMatch.name,
       signature: primaryMatch.signature,
@@ -178,13 +225,21 @@ export class TypeParser {
       returnType: primaryMatch.returnType,
       overloads: overloads.length > 1 ? overloads : undefined,
       relatedTypes,
+      examples: examples.length > 0 ? examples : undefined,
+      deprecated: primaryMatch.deprecated,
+      deprecatedMessage: primaryMatch.deprecatedMessage,
     };
   }
 
   /**
-   * Search for APIs matching a query
+   * Search for APIs matching a query with smart response filtering
    */
-  searchApis(content: string, query: string, fileName: string = 'types.d.ts'): TypeDefinition[] {
+  searchApis(
+    content: string,
+    query: string,
+    fileName: string = 'types.d.ts',
+    maxResults: number = 20
+  ): TypeDefinition[] {
     const parseResult = this.parse(content, fileName);
     const queryLower = query.toLowerCase();
     const queryParts = queryLower.split(/\s+/);
@@ -200,21 +255,42 @@ export class TypeParser {
         );
       })
       .sort((a, b) => {
-        // Prioritize exact name matches
-        const aExact = a.name.toLowerCase() === queryLower;
-        const bExact = b.name.toLowerCase() === queryLower;
-        if (aExact && !bExact) return -1;
-        if (bExact && !aExact) return 1;
+        // Score-based sorting for better ranking
+        const scoreA = this.scoreDefinition(a, queryLower);
+        const scoreB = this.scoreDefinition(b, queryLower);
+        return scoreB - scoreA;
+      })
+      .slice(0, maxResults);
+  }
 
-        // Then prioritize starts-with matches
-        const aStarts = a.name.toLowerCase().startsWith(queryLower);
-        const bStarts = b.name.toLowerCase().startsWith(queryLower);
-        if (aStarts && !bStarts) return -1;
-        if (bStarts && !aStarts) return 1;
+  /**
+   * Score a type definition for relevance ranking
+   */
+  private scoreDefinition(def: TypeDefinition, queryLower: string): number {
+    let score = 0;
+    const nameLower = def.name.toLowerCase();
 
-        // Finally sort alphabetically
-        return a.name.localeCompare(b.name);
-      });
+    // Exact name match
+    if (nameLower === queryLower) score += 100;
+    // Starts with query
+    else if (nameLower.startsWith(queryLower)) score += 80;
+    // Contains query
+    else if (nameLower.includes(queryLower)) score += 60;
+
+    // Boost exported declarations (functions and interfaces are usually more useful)
+    if (def.kind === 'function') score += 15;
+    if (def.kind === 'interface') score += 10;
+
+    // Boost items with JSDoc descriptions
+    if (def.description) score += 10;
+
+    // Boost items with examples
+    if (def.examples && def.examples.length > 0) score += 5;
+
+    // Penalize deprecated items
+    if (def.deprecated) score -= 20;
+
+    return score;
   }
 
   /**
@@ -265,19 +341,33 @@ export class TypeParser {
 
     const name = node.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
     const parameters = this.parseParameters(node.parameters, sourceFile);
     const returnType = node.type ? this.getNodeText(node.type, sourceFile) : 'void';
     const generics = this.parseTypeParameters(node.typeParameters, sourceFile);
+
+    // Wire JSDoc @param descriptions into ParameterInfo
+    if (jsDoc.params) {
+      for (const param of parameters) {
+        const docParam = jsDoc.params[param.name];
+        if (docParam) {
+          param.description = docParam;
+        }
+      }
+    }
 
     return {
       name,
       kind: 'function',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
       parameters,
-      returnType,
+      returnType: jsDoc.returns ? `${returnType} — ${jsDoc.returns}` : returnType,
       generics: generics.length > 0 ? generics : undefined,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
+      seeAlso: jsDoc.see?.length ? jsDoc.see : undefined,
+      examples: jsDoc.examples?.length ? jsDoc.examples : undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -291,7 +381,7 @@ export class TypeParser {
   ): TypeDefinition {
     const name = node.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
     const members = this.parseInterfaceMembers(node.members, sourceFile);
     const generics = this.parseTypeParameters(node.typeParameters, sourceFile);
     const extendsClause = node.heritageClauses
@@ -302,10 +392,13 @@ export class TypeParser {
       name,
       kind: 'interface',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
       members,
       generics: generics.length > 0 ? generics : undefined,
       extends: extendsClause && extendsClause.length > 0 ? extendsClause : undefined,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
+      examples: jsDoc.examples?.length ? jsDoc.examples : undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -319,15 +412,18 @@ export class TypeParser {
   ): TypeDefinition {
     const name = node.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
     const generics = this.parseTypeParameters(node.typeParameters, sourceFile);
 
     return {
       name,
       kind: 'type',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
       generics: generics.length > 0 ? generics : undefined,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
+      examples: jsDoc.examples?.length ? jsDoc.examples : undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -343,7 +439,7 @@ export class TypeParser {
 
     const name = node.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
     const members = this.parseClassMembers(node.members, sourceFile);
     const generics = this.parseTypeParameters(node.typeParameters, sourceFile);
 
@@ -351,9 +447,12 @@ export class TypeParser {
       name,
       kind: 'class',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
       members,
       generics: generics.length > 0 ? generics : undefined,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
+      examples: jsDoc.examples?.length ? jsDoc.examples : undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -370,7 +469,7 @@ export class TypeParser {
 
     const name = declaration.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
 
     // Check if it's a function type (like React hooks)
     const isFunctionType =
@@ -380,7 +479,10 @@ export class TypeParser {
       name,
       kind: isFunctionType ? 'function' : 'constant',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
+      examples: jsDoc.examples?.length ? jsDoc.examples : undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -394,7 +496,7 @@ export class TypeParser {
   ): TypeDefinition {
     const name = node.name.text;
     const signature = this.getNodeText(node, sourceFile);
-    const description = this.getJsDocComment(node, sourceFile);
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
 
     const members = node.members.map((member) => ({
       name: ts.isIdentifier(member.name) ? member.name.text : this.getNodeText(member.name, sourceFile),
@@ -407,8 +509,10 @@ export class TypeParser {
       name,
       kind: 'enum',
       signature: this.cleanSignature(signature),
-      description,
+      description: jsDoc.description,
       members,
+      deprecated: jsDoc.deprecated !== undefined,
+      deprecatedMessage: jsDoc.deprecated || undefined,
       location: this.getLocation(node, sourceFile),
     };
   }
@@ -516,50 +620,180 @@ export class TypeParser {
   }
 
   /**
-   * Get JSDoc comment for a node
+   * Enhanced JSDoc extraction result
    */
-  private getJsDocComment(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
+  private getEnhancedJsDoc(node: ts.Node, sourceFile: ts.SourceFile): {
+    description?: string;
+    params?: Record<string, string>;
+    returns?: string;
+    examples?: string[];
+    deprecated?: string;
+    see?: string[];
+  } {
+    const result: {
+      description?: string;
+      params?: Record<string, string>;
+      returns?: string;
+      examples?: string[];
+      deprecated?: string;
+      see?: string[];
+    } = {};
+
+    // Try TS compiler JSDoc API first
     const jsDocTags = ts.getJSDocTags(node);
     if (jsDocTags.length > 0) {
-      const descriptions = jsDocTags
-        .filter((tag) => tag.tagName.text === 'description' || !tag.tagName.text)
-        .map((tag) => (tag.comment ? ts.getTextOfJSDocComment(tag.comment) : ''))
-        .filter(Boolean);
-      if (descriptions.length > 0) {
-        return descriptions.join('\n');
+      const params: Record<string, string> = {};
+      const examples: string[] = [];
+      const see: string[] = [];
+
+      for (const tag of jsDocTags) {
+        const tagName = tag.tagName.text.toLowerCase();
+        const comment = tag.comment ? ts.getTextOfJSDocComment(tag.comment) : '';
+
+        switch (tagName) {
+          case 'param': {
+            // Extract param name from the tag
+            if (ts.isJSDocParameterTag(tag) && ts.isIdentifier(tag.name)) {
+              params[tag.name.text] = comment || '';
+            }
+            break;
+          }
+          case 'returns':
+          case 'return':
+            result.returns = comment || undefined;
+            break;
+          case 'example':
+            if (comment) examples.push(comment);
+            break;
+          case 'deprecated':
+            result.deprecated = comment || 'Deprecated';
+            break;
+          case 'see':
+            if (comment) see.push(comment);
+            break;
+          case 'description':
+            result.description = comment || undefined;
+            break;
+        }
+      }
+
+      if (Object.keys(params).length > 0) result.params = params;
+      if (examples.length > 0) result.examples = examples;
+      if (see.length > 0) result.see = see;
+    }
+
+    // Fall back to / supplement with leading comment parsing
+    if (!result.description) {
+      const fullText = sourceFile.getFullText();
+      const commentRanges = ts.getLeadingCommentRanges(fullText, node.getFullStart());
+      if (commentRanges && commentRanges.length > 0) {
+        const lastComment = commentRanges[commentRanges.length - 1];
+        const commentText = fullText.slice(lastComment.pos, lastComment.end);
+
+        if (commentText.startsWith('/**')) {
+          const parsed = this.parseEnhancedJsDocComment(commentText);
+          // Merge: leading comment supplements but doesn't override
+          if (!result.description && parsed.description) result.description = parsed.description;
+          if (!result.params && parsed.params) result.params = parsed.params;
+          if (!result.returns && parsed.returns) result.returns = parsed.returns;
+          if (!result.examples && parsed.examples) result.examples = parsed.examples;
+          if (result.deprecated === undefined && parsed.deprecated !== undefined) result.deprecated = parsed.deprecated;
+          if (!result.see && parsed.see) result.see = parsed.see;
+        }
       }
     }
 
-    // Try to get leading comment
-    const fullText = sourceFile.getFullText();
-    const commentRanges = ts.getLeadingCommentRanges(fullText, node.getFullStart());
-    if (commentRanges && commentRanges.length > 0) {
-      const lastComment = commentRanges[commentRanges.length - 1];
-      const commentText = fullText.slice(lastComment.pos, lastComment.end);
-
-      // Parse JSDoc style comment
-      if (commentText.startsWith('/**')) {
-        return this.parseJsDocComment(commentText);
-      }
-    }
-
-    return undefined;
+    return result;
   }
 
   /**
-   * Parse JSDoc comment text
+   * Parse enhanced JSDoc comment text extracting all tag types
    */
-  private parseJsDocComment(comment: string): string | undefined {
-    // Remove /** and */ and clean up
+  private parseEnhancedJsDocComment(comment: string): {
+    description?: string;
+    params?: Record<string, string>;
+    returns?: string;
+    examples?: string[];
+    deprecated?: string;
+    see?: string[];
+  } {
+    const result: {
+      description?: string;
+      params?: Record<string, string>;
+      returns?: string;
+      examples?: string[];
+      deprecated?: string;
+      see?: string[];
+    } = {};
+
     const lines = comment
       .replace(/^\/\*\*/, '')
       .replace(/\*\/$/, '')
       .split('\n')
-      .map((line) => line.replace(/^\s*\*\s?/, '').trim())
-      .filter((line) => !line.startsWith('@')); // Remove @param, @returns, etc.
+      .map((line) => line.replace(/^\s*\*\s?/, ''));
 
-    const description = lines.join(' ').trim();
-    return description || undefined;
+    const descriptionLines: string[] = [];
+    let currentTag: string | null = null;
+    let currentTagContent: string[] = [];
+    const params: Record<string, string> = {};
+    const examples: string[] = [];
+    const see: string[] = [];
+
+    const flushTag = () => {
+      if (!currentTag) return;
+      const content = currentTagContent.join('\n').trim();
+
+      if (currentTag === 'param') {
+        // Parse "@param {type} name description" or "@param name description"
+        const paramMatch = content.match(/^(?:\{[^}]*\}\s+)?(\w+)\s*(.*)/s);
+        if (paramMatch) {
+          params[paramMatch[1]] = paramMatch[2].trim();
+        }
+      } else if (currentTag === 'returns' || currentTag === 'return') {
+        result.returns = content.replace(/^\{[^}]*\}\s*/, '');
+      } else if (currentTag === 'example') {
+        if (content) examples.push(content);
+      } else if (currentTag === 'deprecated') {
+        result.deprecated = content || 'Deprecated';
+      } else if (currentTag === 'see') {
+        if (content) see.push(content);
+      }
+
+      currentTag = null;
+      currentTagContent = [];
+    };
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const tagMatch = trimmed.match(/^@(\w+)\s*(.*)/);
+
+      if (tagMatch) {
+        flushTag();
+        currentTag = tagMatch[1].toLowerCase();
+        currentTagContent = [tagMatch[2]];
+      } else if (currentTag) {
+        currentTagContent.push(trimmed);
+      } else if (trimmed) {
+        descriptionLines.push(trimmed);
+      }
+    }
+    flushTag();
+
+    const description = descriptionLines.join(' ').trim();
+    if (description) result.description = description;
+    if (Object.keys(params).length > 0) result.params = params;
+    if (examples.length > 0) result.examples = examples;
+    if (see.length > 0) result.see = see;
+
+    return result;
+  }
+
+  /**
+   * Get JSDoc comment for a node (simple version for members)
+   */
+  private getJsDocComment(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
+    const jsDoc = this.getEnhancedJsDoc(node, sourceFile);
+    return jsDoc.description;
   }
 
   /**
@@ -690,6 +924,14 @@ export class TypeParser {
       'ReadonlyArray',
     ]);
     return builtIns.has(typeName);
+  }
+
+  /**
+   * Clear parse cache
+   */
+  clearCache(): void {
+    this.parseCache.clear();
+    logger.debug('Parse cache cleared');
   }
 }
 

@@ -94,8 +94,8 @@ export async function searchApis(
   const allResults: ApiSearchResult[] = [];
   const frameworksSearched: string[] = [];
 
-  // Search each framework
-  for (const framework of frameworks) {
+  // Search all frameworks in parallel
+  const searchPromises = frameworks.map(async (framework) => {
     const packageName = queryParser.getPackageName(framework) || framework;
 
     try {
@@ -103,18 +103,17 @@ export async function searchApis(
       const types = await typeFetcher.fetchTypes(packageName);
       if (!types) {
         logger.debug('No types found for framework', { framework, packageName });
-        continue;
+        return null;
       }
-
-      frameworksSearched.push(framework);
 
       // Search the types
       const searchResults = typeParser.searchApis(types.content, input.query);
 
       // Convert to API search results
+      const results: ApiSearchResult[] = [];
       for (const result of searchResults.slice(0, limit)) {
         const relevance = calculateRelevance(result, input.query);
-        allResults.push({
+        results.push({
           framework,
           name: result.name,
           kind: result.kind,
@@ -123,11 +122,22 @@ export async function searchApis(
           relevance,
         });
       }
+
+      return { framework, results };
     } catch (error) {
       logger.error('Error searching framework', {
         framework,
         error: error instanceof Error ? error.message : String(error),
       });
+      return null;
+    }
+  });
+
+  const settled = await Promise.allSettled(searchPromises);
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value) {
+      frameworksSearched.push(result.value.framework);
+      allResults.push(...result.value.results);
     }
   }
 

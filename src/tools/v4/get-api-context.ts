@@ -131,8 +131,13 @@ export async function getApiContext(
 
   logger.debug('Resolved version', { packageName, resolvedVersion });
 
-  // Fetch type definitions
-  const types = await typeFetcher.fetchTypes(packageName, resolvedVersion);
+  // Fetch type definitions and examples in parallel (both are I/O-bound)
+  const typesPromise = typeFetcher.fetchTypes(packageName, resolvedVersion);
+  const examplesPromise = input.includeExamples !== false
+    ? exampleExtractor.getExamplesForConcept(framework, parsedQuery.concept)
+    : Promise.resolve([]);
+
+  const [types, rawExamples] = await Promise.all([typesPromise, examplesPromise]);
 
   let api: ApiSignature | null = null;
   const relatedApis: string[] = [];
@@ -224,17 +229,10 @@ export async function getApiContext(
     }
   }
 
-  // Fetch code examples
-  let examples: CodeExample[] = [];
-  if (input.includeExamples !== false) {
-    const maxExamples = input.maxExamples || 2;
-    examples = await exampleExtractor.getExamplesForConcept(
-      framework,
-      parsedQuery.concept
-    );
-    examples = examples.slice(0, maxExamples);
-    logger.debug('Fetched examples', { count: examples.length });
-  }
+  // Use pre-fetched examples
+  const maxExamples = input.maxExamples || 2;
+  let examples: CodeExample[] = rawExamples.slice(0, maxExamples);
+  logger.debug('Fetched examples', { count: examples.length });
 
   const duration = Date.now() - startTime;
   logger.info('Query processed', {
@@ -260,7 +258,13 @@ export async function getApiContext(
 }
 
 /**
+ * Maximum response size in characters to keep output LLM-friendly
+ */
+const MAX_RESPONSE_SIZE = 8000;
+
+/**
  * Format the output for MCP response (minimal, LLM-friendly)
+ * Progressively truncates when exceeding MAX_RESPONSE_SIZE
  */
 export function formatApiContextResponse(output: GetApiContextOutput): string {
   const lines: string[] = [];
@@ -274,18 +278,28 @@ export function formatApiContextResponse(output: GetApiContextOutput): string {
 
   // API signature
   if (output.api) {
+    // Deprecation warning
+    if (output.api.deprecated) {
+      lines.push(`**DEPRECATED**${output.api.deprecatedMessage ? `: ${output.api.deprecatedMessage}` : ''}`);
+      lines.push('');
+    }
+
     lines.push('## API Signature');
     lines.push('```typescript');
     lines.push(output.api.signature);
     lines.push('```');
+    if (output.api.description) {
+      lines.push(output.api.description);
+    }
     lines.push('');
 
-    // Parameters
+    // Parameters with descriptions
     if (output.api.parameters && output.api.parameters.length > 0) {
       lines.push('### Parameters');
       for (const param of output.api.parameters) {
         const optional = param.optional ? '?' : '';
-        lines.push(`- \`${param.name}${optional}\`: ${param.type}`);
+        const desc = param.description ? ` — ${param.description}` : '';
+        lines.push(`- \`${param.name}${optional}\`: ${param.type}${desc}`);
       }
       lines.push('');
     }
@@ -297,25 +311,53 @@ export function formatApiContextResponse(output: GetApiContextOutput): string {
       lines.push('');
     }
 
-    // Related types
-    if (Object.keys(output.api.relatedTypes).length > 0) {
-      lines.push('### Related Types');
-      for (const [name, signature] of Object.entries(output.api.relatedTypes)) {
-        lines.push(`**${name}**`);
-        lines.push('```typescript');
-        lines.push(signature);
+    // JSDoc examples (from type definitions)
+    if (output.api.examples && output.api.examples.length > 0) {
+      lines.push('### JSDoc Examples');
+      for (const example of output.api.examples) {
+        lines.push('```');
+        lines.push(example);
         lines.push('```');
       }
       lines.push('');
     }
 
-    // Overloads
+    // Related types (limit based on size budget)
+    const relatedTypeEntries = Object.entries(output.api.relatedTypes);
+    if (relatedTypeEntries.length > 0) {
+      const currentSize = lines.join('\n').length;
+      const maxRelatedTypes = currentSize > MAX_RESPONSE_SIZE * 0.6 ? 3 : relatedTypeEntries.length;
+
+      lines.push('### Related Types');
+      for (const [name, signature] of relatedTypeEntries.slice(0, maxRelatedTypes)) {
+        // Truncate long signatures
+        const truncatedSig = signature.length > 300
+          ? signature.substring(0, 297) + '...'
+          : signature;
+        lines.push(`**${name}**`);
+        lines.push('```typescript');
+        lines.push(truncatedSig);
+        lines.push('```');
+      }
+      if (relatedTypeEntries.length > maxRelatedTypes) {
+        lines.push(`*...and ${relatedTypeEntries.length - maxRelatedTypes} more related types*`);
+      }
+      lines.push('');
+    }
+
+    // Overloads (limit to 2 if response is getting large)
     if (output.api.overloads && output.api.overloads.length > 1) {
+      const currentSize = lines.join('\n').length;
+      const maxOverloads = currentSize > MAX_RESPONSE_SIZE * 0.6 ? 2 : output.api.overloads.length;
+
       lines.push('### Overloads');
-      for (const overload of output.api.overloads) {
+      for (const overload of output.api.overloads.slice(0, maxOverloads)) {
         lines.push('```typescript');
         lines.push(overload);
         lines.push('```');
+      }
+      if (output.api.overloads.length > maxOverloads) {
+        lines.push(`*...and ${output.api.overloads.length - maxOverloads} more overloads*`);
       }
       lines.push('');
     }
@@ -328,10 +370,13 @@ export function formatApiContextResponse(output: GetApiContextOutput): string {
     lines.push('');
   }
 
-  // Examples
+  // Examples (reduce count if response is getting large)
   if (output.examples.length > 0) {
+    const currentSize = lines.join('\n').length;
+    const maxExamples = currentSize > MAX_RESPONSE_SIZE * 0.7 ? 1 : output.examples.length;
+
     lines.push('## Code Examples');
-    for (const example of output.examples) {
+    for (const example of output.examples.slice(0, maxExamples)) {
       if (example.context) {
         lines.push(`### ${example.context}`);
       }
@@ -339,6 +384,10 @@ export function formatApiContextResponse(output: GetApiContextOutput): string {
       lines.push(example.code);
       lines.push('```');
       lines.push(`*Source: ${example.source}*`);
+      lines.push('');
+    }
+    if (output.examples.length > maxExamples) {
+      lines.push(`*${output.examples.length - maxExamples} more examples available*`);
       lines.push('');
     }
   }

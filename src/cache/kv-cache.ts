@@ -13,7 +13,7 @@ const logger = getLogger('kv-cache');
 export class KVCache {
   private redis: Redis | null = null;
   private localCache: Map<string, CacheEntry> = new Map();
-  private readonly MAX_LOCAL_ENTRIES = 100;
+  private readonly MAX_LOCAL_ENTRIES = parseInt(process.env.CACHE_MAX_ENTRIES || '300', 10);
 
   constructor() {
     this.initRedis();
@@ -48,9 +48,12 @@ export class KVCache {
   ): Promise<string | null> {
     const cacheKey = generateCacheKey(framework, path, sourceType);
 
-    // Check local cache first
+    // Check local cache first (with LRU promotion)
     const localEntry = this.localCache.get(cacheKey);
     if (localEntry && !this.isExpired(localEntry)) {
+      // LRU: move to end by deleting and re-inserting
+      this.localCache.delete(cacheKey);
+      this.localCache.set(cacheKey, localEntry);
       logger.debug('Cache hit (local)', { framework, path });
       return localEntry.content;
     }

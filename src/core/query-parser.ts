@@ -85,7 +85,7 @@ const FRAMEWORK_ALIASES: Record<string, { package: string; aliases: string[] }> 
   // Data fetching
   'tanstack-query': {
     package: '@tanstack/react-query',
-    aliases: ['react-query', 'tanstack query', 'react query'],
+    aliases: ['react-query', 'tanstack query', 'react query', '@tanstack/react-query', '@tanstack/query'],
   },
   swr: {
     package: 'swr',
@@ -247,10 +247,74 @@ const FRAMEWORK_ALIASES: Record<string, { package: string; aliases: string[] }> 
     package: '@emotion/react',
     aliases: ['@emotion'],
   },
+
+  // Phase 3.4: Expanded aliases (+15 packages)
+  shadcn: {
+    package: '@radix-ui/react-slot',
+    aliases: ['shadcn-ui', 'shadcn/ui'],
+  },
+  clerk: {
+    package: '@clerk/nextjs',
+    aliases: ['clerk-js', '@clerk'],
+  },
+  'next-auth': {
+    package: 'next-auth',
+    aliases: ['nextauth', 'auth.js', 'authjs'],
+  },
+  lucia: {
+    package: 'lucia',
+    aliases: ['lucia-auth'],
+  },
+  tailwindcss: {
+    package: 'tailwindcss',
+    aliases: ['tailwind', 'tw'],
+  },
+  'headless-ui': {
+    package: '@headlessui/react',
+    aliases: ['headlessui', '@headlessui'],
+  },
+  radix: {
+    package: '@radix-ui/react-dialog',
+    aliases: ['radix-ui', '@radix-ui', 'radix ui'],
+  },
+  tiptap: {
+    package: '@tiptap/react',
+    aliases: ['@tiptap'],
+  },
+  three: {
+    package: 'three',
+    aliases: ['threejs', 'three.js'],
+  },
+  d3: {
+    package: 'd3',
+    aliases: ['d3js', 'd3.js'],
+  },
+  'socket.io': {
+    package: 'socket.io',
+    aliases: ['socketio', 'socket-io'],
+  },
+  bullmq: {
+    package: 'bullmq',
+    aliases: ['bull-mq'],
+  },
+  ioredis: {
+    package: 'ioredis',
+    aliases: [],
+  },
+  resend: {
+    package: 'resend',
+    aliases: [],
+  },
+  uploadthing: {
+    package: 'uploadthing',
+    aliases: ['upload-thing'],
+  },
 };
 
 /**
- * Common API patterns and their associated frameworks
+ * Common API patterns and their associated frameworks.
+ * Only include patterns that are specific enough to avoid false positives.
+ * Generic words (create, update, delete, string, number, object, array, etc.) are excluded.
  */
 const API_PATTERNS: Record<string, string[]> = {
   // React hooks
@@ -281,7 +345,6 @@ const API_PATTERNS: Record<string, string[]> = {
   createroot: ['react-dom'],
 
   // Next.js
-  useRouter: ['next'],
   usepathname: ['next'],
   usesearchparams: ['next'],
   useselectedlayoutsegment: ['next'],
@@ -292,45 +355,24 @@ const API_PATTERNS: Record<string, string[]> = {
   generatemetadata: ['next'],
   generatestaticparams: ['next'],
 
-  // Vue
-  ref: ['vue'],
+  // Vue (only specific enough patterns)
   reactive: ['vue'],
-  computed: ['vue'],
-  watch: ['vue'],
   watcheffect: ['vue'],
   onmounted: ['vue'],
   onunmounted: ['vue'],
-  provide: ['vue'],
-  inject: ['vue'],
-  defineprop: ['vue'],
+  defineprops: ['vue'],
   defineemits: ['vue'],
+  definecomponent: ['vue'],
 
-  // Prisma
+  // Prisma (only unique method names)
   findmany: ['prisma'],
   findunique: ['prisma'],
   findfirst: ['prisma'],
-  create: ['prisma'],
-  update: ['prisma'],
-  delete: ['prisma'],
   upsert: ['prisma'],
 
-  // Zod
-  z: ['zod'],
-  string: ['zod'],
-  number: ['zod'],
-  object: ['zod'],
-  array: ['zod'],
-  union: ['zod'],
-  literal: ['zod'],
-  optional: ['zod'],
-  nullable: ['zod'],
-  parse: ['zod'],
-  safeParse: ['zod'],
-  infer: ['zod'],
-
-  // Express
-  router: ['express'],
-  middleware: ['express'],
+  // Zod (only specific enough patterns)
+  safeparse: ['zod'],
+  zodschema: ['zod'],
 
   // TanStack Query
   usequery: ['tanstack-query'],
@@ -357,20 +399,20 @@ const API_PATTERNS: Record<string, string[]> = {
   usewatch: ['react-hook-form'],
   usefieldarray: ['react-hook-form'],
 
-  // Framer Motion
-  motion: ['framer-motion'],
-  animate: ['framer-motion'],
+  // Framer Motion (only specific patterns)
   useanimate: ['framer-motion'],
   animatepresence: ['framer-motion'],
 };
 
 /**
- * Version patterns for extraction
+ * Version patterns for extraction.
+ * Require explicit version markers (v, @, version) to prevent matching
+ * port numbers, issue numbers, or other numeric tokens.
  */
 const VERSION_PATTERNS = [
-  /v?(\d+(?:\.\d+)?(?:\.\d+)?(?:-[\w.]+)?)/i, // v19, 19, 19.0, 19.0.0, 19.0.0-beta.1
-  /version\s*(\d+(?:\.\d+)?(?:\.\d+)?)/i, // version 19
-  /@(\d+(?:\.\d+)?(?:\.\d+)?)/i, // @19
+  /\bv(\d+(?:\.\d+)?(?:\.\d+)?(?:-[\w.]+)?)\b/i, // v19, v19.0, v19.0.0, v19.0.0-beta.1
+  /\bversion\s+(\d+(?:\.\d+)?(?:\.\d+)?)\b/i, // version 19
+  /@(\d+(?:\.\d+){1,2}(?:-[\w.]+)?)\b/, // @19.0 or @19.0.0 (require at least major.minor)
 ];
 
 /**
@@ -503,23 +545,36 @@ export class QueryParser {
       confidence: number;
     } | null = null;
 
-    // Check for direct framework mentions
+    // Pre-check: match tokens directly against package names (handles scoped packages)
     for (const [framework, info] of Object.entries(FRAMEWORK_ALIASES)) {
-      // Check framework name
-      if (tokens.includes(framework) || tokens.includes(framework.replace(/-/g, ''))) {
+      const pkgLower = info.package.toLowerCase();
+      if (normalizedQuery.includes(pkgLower)) {
         const confidence = 1.0;
         if (!bestMatch || confidence > bestMatch.confidence) {
           bestMatch = { framework, packageName: info.package, confidence };
         }
       }
+    }
 
-      // Check aliases
-      for (const alias of info.aliases) {
-        const aliasLower = alias.toLowerCase();
-        if (normalizedQuery.includes(aliasLower)) {
-          const confidence = 0.9;
+    // Check for direct framework mentions
+    if (!bestMatch) {
+      for (const [framework, info] of Object.entries(FRAMEWORK_ALIASES)) {
+        // Check framework name
+        if (tokens.includes(framework) || tokens.includes(framework.replace(/-/g, ''))) {
+          const confidence = 1.0;
           if (!bestMatch || confidence > bestMatch.confidence) {
             bestMatch = { framework, packageName: info.package, confidence };
+          }
+        }
+
+        // Check aliases
+        for (const alias of info.aliases) {
+          const aliasLower = alias.toLowerCase();
+          if (normalizedQuery.includes(aliasLower)) {
+            const confidence = 0.9;
+            if (!bestMatch || confidence > bestMatch.confidence) {
+              bestMatch = { framework, packageName: info.package, confidence };
+            }
           }
         }
       }
@@ -529,6 +584,11 @@ export class QueryParser {
     if (!bestMatch) {
       for (const token of tokens) {
         const normalizedToken = token.toLowerCase().replace(/[^a-z]/g, '');
+        // Only use API pattern fallback for tokens that are specific enough:
+        // either 6+ chars long, or match the use* hook pattern
+        if (normalizedToken.length < 6 && !normalizedToken.startsWith('use')) {
+          continue;
+        }
         if (API_PATTERNS[normalizedToken]) {
           const frameworks = API_PATTERNS[normalizedToken];
           if (frameworks.length === 1) {
@@ -543,6 +603,41 @@ export class QueryParser {
               break;
             }
           }
+        }
+      }
+    }
+
+    // If still no match, try fuzzy matching (30% tolerance)
+    if (!bestMatch) {
+      for (const token of tokens) {
+        if (token.length < 3) continue;
+        for (const [framework, info] of Object.entries(FRAMEWORK_ALIASES)) {
+          const distance = levenshteinDistance(token, framework);
+          const tolerance = Math.ceil(framework.length * 0.3);
+          if (distance > 0 && distance <= tolerance) {
+            bestMatch = {
+              framework,
+              packageName: info.package,
+              confidence: 0.6,
+            };
+            break;
+          }
+        }
+        if (bestMatch) break;
+      }
+    }
+
+    // Dynamic npm package resolution: treat first npm-like token as potential package
+    if (!bestMatch) {
+      for (const token of tokens) {
+        // Match scoped (@scope/name) or unscoped (name) package patterns
+        if (/^(@[\w-]+\/)?[\w-]+$/.test(token) && token.length >= 2) {
+          bestMatch = {
+            framework: token,
+            packageName: token,
+            confidence: 0.4,
+          };
+          break;
         }
       }
     }
@@ -721,6 +816,35 @@ export class QueryParser {
     // camelCase or PascalCase
     return /^[a-z]+[A-Z]|^[A-Z][a-z]/.test(str);
   }
+}
+
+/**
+ * Lightweight Levenshtein distance for fuzzy matching
+ */
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+
+  // Use single row for space efficiency
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array<number>(n + 1);
+
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,      // deletion
+        curr[j - 1] + 1,  // insertion
+        prev[j - 1] + cost // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+
+  return prev[n];
 }
 
 // Singleton instance

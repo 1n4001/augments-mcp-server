@@ -120,6 +120,80 @@ const DOC_SOURCES: Record<string, DocSourceConfig> = {
     branch: 'gh-pages',
     websiteBaseUrl: 'https://expressjs.com',
   },
+
+  // Phase 3.3: Expanded doc sources (+12 frameworks)
+  zustand: {
+    repo: 'pmndrs/zustand',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://zustand-demo.pmnd.rs',
+  },
+  jotai: {
+    repo: 'pmndrs/jotai',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://jotai.org',
+  },
+  drizzle: {
+    repo: 'drizzle-team/drizzle-orm',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://orm.drizzle.team',
+  },
+  swr: {
+    repo: 'vercel/swr',
+    docsPath: 'pages',
+    branch: 'main',
+    websiteBaseUrl: 'https://swr.vercel.app',
+  },
+  vitest: {
+    repo: 'vitest-dev/vitest',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://vitest.dev',
+  },
+  playwright: {
+    repo: 'microsoft/playwright',
+    docsPath: 'docs/src',
+    branch: 'main',
+    websiteBaseUrl: 'https://playwright.dev',
+  },
+  fastify: {
+    repo: 'fastify/fastify',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://fastify.dev',
+  },
+  hono: {
+    repo: 'honojs/hono',
+    docsPath: 'docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://hono.dev',
+  },
+  solid: {
+    repo: 'solidjs/solid-docs-next',
+    docsPath: 'src/routes',
+    branch: 'main',
+    websiteBaseUrl: 'https://docs.solidjs.com',
+  },
+  svelte: {
+    repo: 'sveltejs/svelte',
+    docsPath: 'documentation/docs',
+    branch: 'main',
+    websiteBaseUrl: 'https://svelte.dev',
+  },
+  angular: {
+    repo: 'angular/angular',
+    docsPath: 'adev/src/content',
+    branch: 'main',
+    websiteBaseUrl: 'https://angular.dev',
+  },
+  redux: {
+    repo: 'reduxjs/redux',
+    docsPath: 'docs',
+    branch: 'master',
+    websiteBaseUrl: 'https://redux.js.org',
+  },
 };
 
 /**
@@ -422,7 +496,8 @@ export class ExampleExtractor {
     const docPaths = this.getDocPathsForConcept(framework, concept);
     const allExamples: CodeExample[] = [];
 
-    for (const path of docPaths) {
+    // Fetch all doc paths in parallel
+    const fetchPromises = docPaths.map(async (path) => {
       const fullPath = config.docsPath
         ? `${config.docsPath}/${path}`
         : path;
@@ -430,12 +505,17 @@ export class ExampleExtractor {
       const examples = await this.fetchExamplesFromGitHub(config, fullPath);
 
       // Filter the fetched examples for relevance
-      const filtered = examples.filter((ex) =>
+      return examples.filter((ex) =>
         ex.concepts.includes(concept.toLowerCase()) ||
         ex.code.toLowerCase().includes(concept.toLowerCase())
       );
+    });
 
-      allExamples.push(...filtered);
+    const results = await Promise.allSettled(fetchPromises);
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        allExamples.push(...result.value);
+      }
     }
 
     // Deduplicate by code content
@@ -447,13 +527,60 @@ export class ExampleExtractor {
       return true;
     });
 
+    // Score and sort examples by quality
+    const scored = unique
+      .map((ex) => ({ example: ex, score: this.scoreExample(ex) }))
+      .sort((a, b) => b.score - a.score)
+      .map((s) => s.example);
+
     logger.debug('Found examples for concept', {
       framework,
       concept,
-      count: unique.length,
+      count: scored.length,
     });
 
-    return unique;
+    return scored;
+  }
+
+  /**
+   * Score an example by quality (higher = better)
+   */
+  private scoreExample(example: CodeExample): number {
+    let score = 0;
+    const code = example.code;
+
+    // Boost: has import + usage pattern (real code example)
+    if (/\bimport\s/.test(code)) score += 20;
+
+    // Boost: TypeScript or TSX
+    if (example.language === 'typescript' || example.language === 'tsx') score += 15;
+
+    // Boost: JSX components
+    if (example.language === 'jsx' || example.language === 'tsx') score += 10;
+
+    // Boost: has context heading
+    if (example.context) score += 10;
+
+    // Boost: has multiple concepts (demonstrates more)
+    score += Math.min(example.concepts.length * 3, 15);
+
+    // Boost: moderate code length (50-500 chars is ideal)
+    if (code.length >= 50 && code.length <= 500) score += 10;
+    else if (code.length > 500 && code.length <= 1000) score += 5;
+
+    // Penalize: install commands
+    if (/\b(npm|yarn|pnpm|bun)\s+(install|add|i)\b/.test(code)) score -= 30;
+
+    // Penalize: bash/shell snippets
+    if (example.language === 'bash' || example.language === 'shell') score -= 25;
+
+    // Penalize: very short code (likely incomplete)
+    if (code.length < 30) score -= 15;
+
+    // Penalize: just configuration
+    if (this.isConfigCode(code)) score -= 20;
+
+    return score;
   }
 
   /**

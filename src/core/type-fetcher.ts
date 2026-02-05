@@ -53,7 +53,9 @@ const BARREL_EXPORT_MODULES: Record<string, Record<string, string[]>> = {
 };
 
 /**
- * Package metadata from npm registry
+ * Abbreviated package metadata from npm registry (install-v1 format)
+ * Uses the Accept: application/vnd.npm.install-v1+json header
+ * to fetch only essential metadata (~5-50KB instead of 2-10MB)
  */
 export interface NpmPackageInfo {
   name: string;
@@ -73,6 +75,14 @@ export interface NpmPackageInfo {
     [tag: string]: string | undefined;
   };
   versions: Record<string, NpmVersionInfo>;
+}
+
+/**
+ * Cached package info with timestamp for TTL
+ */
+interface CachedPackageInfo {
+  data: NpmPackageInfo;
+  fetchedAt: number;
 }
 
 export interface NpmVersionInfo {
@@ -109,26 +119,52 @@ export interface TypeDefinitionResult {
  */
 export class TypeFetcher {
   private cache: Map<string, TypeDefinitionResult> = new Map();
-  private packageInfoCache: Map<string, NpmPackageInfo> = new Map();
+  private packageInfoCache: Map<string, CachedPackageInfo> = new Map();
+  private inFlightRequests: Map<string, Promise<NpmPackageInfo | null>> = new Map();
   private readonly CACHE_TTL = 3600 * 1000; // 1 hour
+  private readonly PACKAGE_INFO_TTL = 1800 * 1000; // 30 minutes
 
   /**
-   * Fetch package metadata from npm registry
+   * Fetch package metadata from npm registry using abbreviated metadata endpoint
    */
   async getPackageInfo(packageName: string): Promise<NpmPackageInfo | null> {
-    // Check cache
+    // Check cache with TTL
     const cached = this.packageInfoCache.get(packageName);
-    if (cached) {
-      return cached;
+    if (cached && Date.now() - cached.fetchedAt < this.PACKAGE_INFO_TTL) {
+      return cached.data;
     }
 
+    // Check for in-flight request (deduplication)
+    const inFlight = this.inFlightRequests.get(packageName);
+    if (inFlight) {
+      logger.debug('Awaiting in-flight request', { packageName });
+      return inFlight;
+    }
+
+    // Create the request and store it for deduplication
+    const request = this.fetchPackageInfo(packageName);
+    this.inFlightRequests.set(packageName, request);
+
+    try {
+      const result = await request;
+      return result;
+    } finally {
+      this.inFlightRequests.delete(packageName);
+    }
+  }
+
+  /**
+   * Internal method to fetch package info from npm
+   */
+  private async fetchPackageInfo(packageName: string): Promise<NpmPackageInfo | null> {
     try {
       const url = `${NPM_REGISTRY}/${encodeURIComponent(packageName)}`;
-      logger.debug('Fetching package info', { packageName, url });
+      logger.debug('Fetching package info (abbreviated)', { packageName, url });
 
       const response = await fetch(url, {
         headers: {
-          Accept: 'application/json',
+          // Use abbreviated metadata to reduce payload from 2-10MB to 5-50KB
+          Accept: 'application/vnd.npm.install-v1+json',
         },
       });
 
@@ -141,13 +177,32 @@ export class TypeFetcher {
       }
 
       const data = (await response.json()) as NpmPackageInfo;
-      this.packageInfoCache.set(packageName, data);
+      this.packageInfoCache.set(packageName, { data, fetchedAt: Date.now() });
       return data;
     } catch (error) {
       logger.error('Failed to fetch package info', {
         packageName,
         error: error instanceof Error ? error.message : String(error),
       });
+      return null;
+    }
+  }
+
+  /**
+   * Fetch version-specific package info for types/typings fields
+   */
+  async getVersionSpecificInfo(packageName: string, version: string): Promise<NpmVersionInfo | null> {
+    try {
+      const url = `${NPM_REGISTRY}/${encodeURIComponent(packageName)}/${version}`;
+      logger.debug('Fetching version-specific info', { packageName, version, url });
+
+      const response = await fetch(url, {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) return null;
+      return (await response.json()) as NpmVersionInfo;
+    } catch {
       return null;
     }
   }
@@ -198,8 +253,17 @@ export class TypeFetcher {
     }
 
     // Check if package has bundled types
+    // First try abbreviated metadata, then fall back to version-specific endpoint
     const packageInfo = await this.getPackageInfo(packageName);
-    const versionInfo = packageInfo?.versions[resolvedVersion];
+    let versionInfo = packageInfo?.versions[resolvedVersion];
+
+    // Abbreviated metadata may not include types/typings fields - fetch version-specific if needed
+    if (versionInfo && !versionInfo.types && !versionInfo.typings) {
+      const specificInfo = await this.getVersionSpecificInfo(packageName, resolvedVersion);
+      if (specificInfo) {
+        versionInfo = specificInfo;
+      }
+    }
 
     if (versionInfo?.types || versionInfo?.typings) {
       const result = await this.fetchBundledTypes(packageName, resolvedVersion, versionInfo);
