@@ -548,7 +548,8 @@ export class QueryParser {
     // Pre-check: match tokens directly against package names (handles scoped packages)
     for (const [framework, info] of Object.entries(FRAMEWORK_ALIASES)) {
       const pkgLower = info.package.toLowerCase();
-      if (normalizedQuery.includes(pkgLower)) {
+      // Use token-level matching to prevent "react" matching inside "reactive"
+      if (tokens.includes(pkgLower)) {
         const confidence = 1.0;
         if (!bestMatch || confidence > bestMatch.confidence) {
           bestMatch = { framework, packageName: info.package, confidence };
@@ -570,10 +571,21 @@ export class QueryParser {
         // Check aliases
         for (const alias of info.aliases) {
           const aliasLower = alias.toLowerCase();
-          if (normalizedQuery.includes(aliasLower)) {
-            const confidence = 0.9;
-            if (!bestMatch || confidence > bestMatch.confidence) {
-              bestMatch = { framework, packageName: info.package, confidence };
+          // For single-word aliases, check tokens to prevent substring false positives
+          // For multi-word aliases, use query includes (safe since multi-word is specific)
+          if (aliasLower.includes(' ')) {
+            if (normalizedQuery.includes(aliasLower)) {
+              const confidence = 0.9;
+              if (!bestMatch || confidence > bestMatch.confidence) {
+                bestMatch = { framework, packageName: info.package, confidence };
+              }
+            }
+          } else {
+            if (tokens.includes(aliasLower)) {
+              const confidence = 0.9;
+              if (!bestMatch || confidence > bestMatch.confidence) {
+                bestMatch = { framework, packageName: info.package, confidence };
+              }
             }
           }
         }
